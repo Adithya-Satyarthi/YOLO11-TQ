@@ -1,0 +1,45 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+yolo11_env
+
+# Model weights and checkpoints
+models/
+*.pt
+*.pth
+*.ckpt
+*.h5
+
+# Experiment tracking and logs
+wandb/
+mlruns/
+tensorboard/
+runs/
+*.log
+
+# Datasets and large results
+data/
+*.csv
+*.npy
+*.npz
+*.hdf5
+*.zip
+*.tar.gz
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
