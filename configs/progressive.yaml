@@ -1,0 +1,53 @@
+model:
+  version: 's'
+  model_path: 'yolo11s.pt'
+
+dataset:
+  data_yaml: 'coco8.yaml'  # Change to your dataset
+  imgsz: 640
+
+progressive:
+  # Bitwidth schedule: will train at each bitwidth sequentially
+  bitwidth_schedule: [8, 4, 2, 'ternary']
+  
+  # Stage configurations
+  stages:
+    8:  # 8-bit stage
+      min_epochs: 10
+      max_epochs: 30
+      plateau_patience: 5
+      plateau_threshold: 0.005
+      learning_rate: 0.001
+    
+    4:  # 4-bit stage
+      min_epochs: 15
+      max_epochs: 40
+      plateau_patience: 5
+      plateau_threshold: 0.003
+      learning_rate: 0.0005
+    
+    2:  # 2-bit stage
+      min_epochs: 20
+      max_epochs: 50
+      plateau_patience: 6
+      plateau_threshold: 0.002
+      learning_rate: 0.0003
+    
+    ternary:  # Ternary stage
+      min_epochs: 30
+      max_epochs: 80
+      plateau_patience: 8
+      plateau_threshold: 0.001
+      learning_rate: 0.0001
+
+training:
+  batch: 16
+  device: 'cuda'
+  seed: 42
+  workers: 4
+  optimizer: 'AdamW'
+  weight_decay: 0.0001
+
+wandb:
+  enabled: true
+  project: 'yolo11-progressive-quantization'
