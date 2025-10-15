@@ -73,42 +73,29 @@ class ProgressiveTrainer:
         return False
     
     def save_checkpoint(self, yolo_model, bitwidth, epoch, metrics, is_best=False):
-        """Save model checkpoint with metadata"""
-        checkpoint = {
-            'epoch': epoch,
-            'bitwidth': bitwidth,
-            'stage': self.current_stage,
-            'metrics': metrics,
-            'model_state_dict': self.model.state_dict(),
-            'best_map_per_stage': self.best_map_per_stage
-        }
+        """Saves the full YOLO model object when it's the best performing for the stage."""
+        if not is_best:
+            return
+
+        # Define the path for the full YOLO model checkpoint
+        yolo_model_save_path = self.save_dir / f'stage{self.current_stage}_{bitwidth}bit_best_model.pt'
+
+        # Save the full YOLO model object, which is the most reliable way to checkpoint
+        yolo_model.save(yolo_model_save_path)
         
-        # Save latest checkpoint
-        latest_path = self.save_dir / f'checkpoint_stage{self.current_stage}_latest.pt'
-        torch.save(checkpoint, latest_path)
-        
-        # Save best checkpoint for this stage
-        if is_best:
-            best_path = self.save_dir / f'checkpoint_stage{self.current_stage}_best.pt'
-            torch.save(checkpoint, best_path)
-            # Also save the full YOLO model
-            yolo_model.save(self.save_dir / f'yolo11_{bitwidth}bit_best.pt')
-            
-            # Get mAP value - handle both dict and object access patterns
+        # Log the save event
+        map_value = 'N/A'
+        try:
+            map_value = metrics.box.map
+        except AttributeError:
+            # Handle cases where metrics might be a dict
             if isinstance(metrics, dict):
-                # If metrics is a dict, try different key patterns
                 if 'metrics/mAP50-95(B)' in metrics:
                     map_value = metrics['metrics/mAP50-95(B)']
                 elif 'box' in metrics and 'map' in metrics['box']:
                     map_value = metrics['box']['map']
-                else:
-                    # Try to find any mAP-related key
-                    map_value = metrics.get('map', metrics.get('mAP', 'N/A'))
-            else:
-                # If it's an object, assume it has .box.map
-                map_value = getattr(getattr(metrics, 'box', None), 'map', 'N/A')
-            
-            print(f"✓ Saved best checkpoint: mAP={map_value if map_value == 'N/A' else f'{map_value:.4f}'}")
+
+        print(f"✓ Saved best model for stage {self.current_stage} to {yolo_model_save_path} (mAP={map_value if map_value == 'N/A' else f'{map_value:.4f}'})")
     
     def load_best_checkpoint(self, stage):
         """Load best checkpoint from previous stage"""
@@ -122,26 +109,21 @@ class ProgressiveTrainer:
         return None
     
     def transition_to_next_stage(self):
-        """Move to next bitwidth stage"""
+        """Move to next bitwidth stage, returning the new bitwidth or None if complete."""
         self.current_stage += 1
-        if self.current_stage >= len(self.bitwidth_schedule):
-            return False  # Training complete
+        if self.is_complete():
+            return None  # Training complete
         
-        # Reset improvement counter
+        # Reset improvement counter for the new stage
         self.epochs_without_improvement = 0
         
-        # Get new bitwidth
-        new_bitwidth = self.bitwidth_schedule[self.current_stage]
+        new_bitwidth = self.get_current_bitwidth()
         
         print(f"\n{'='*80}")
-        print(f"TRANSITIONING TO STAGE {self.current_stage}: {new_bitwidth}-bit")
+        print(f"PREPARING FOR STAGE {self.current_stage}: {new_bitwidth}-bit")
         print(f"{'='*80}\n")
         
-        # Update model bitwidth
-        from src.quantization.progressive_quant import set_model_bitwidth
-        set_model_bitwidth(self.model, new_bitwidth)
-        
-        return True
+        return new_bitwidth
     
     def log_metrics(self, metrics, epoch, bitwidth):
         """Log metrics to console and wandb"""
