@@ -1,3 +1,0 @@
-model:
-  version: s
-  model_path: 'models/yolo11s.pt'

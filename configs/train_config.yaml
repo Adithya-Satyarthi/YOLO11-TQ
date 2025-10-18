@@ -1,0 +1,62 @@
+# TTQ-YOLO11 Training Configuration
+
+# Model settings
+model:
+  name: "yolo11n.pt"  # yolo11n.pt, yolo11s.pt, yolo11m.pt, yolo11l.pt, yolo11x.pt
+  threshold: 0.05  # TTQ threshold factor (paper uses 0.05)
+  quantize_first_layer: false  # Keep first conv in full precision for better accuracy
+
+# Data settings
+data:
+  train: "coco8.yaml"  # Use coco8.yaml for debug, coco.yaml for full training
+  val: "coco8.yaml"
+  
+# Training hyperparameters
+train:
+  epochs: 100
+  batch: 16
+  imgsz: 640
+  device: "0"  # GPU id or "cpu"
+  workers: 8
+  
+  # Optimizer settings
+  optimizer: "Adam"  # Adam, SGD, AdamW
+  lr0: 0.01  # Initial learning rate
+  lrf: 0.01  # Final learning rate (lr0 * lrf)
+  momentum: 0.937  # SGD momentum/Adam beta1
+  weight_decay: 0.0005  # Optimizer weight decay
+  
+  # Scheduler settings
+  patience: 50  # Early stopping patience
+  
+  # Augmentation
+  hsv_h: 0.015  # HSV-Hue augmentation
+  hsv_s: 0.7    # HSV-Saturation augmentation
+  hsv_v: 0.4    # HSV-Value augmentation
+  degrees: 0.0  # Rotation (+/- deg)
+  translate: 0.1  # Translation (+/- fraction)
+  scale: 0.5    # Image scale (+/- gain)
+  shear: 0.0    # Shear (+/- deg)
+  perspective: 0.0  # Perspective (+/- fraction)
+  flipud: 0.0   # Vertical flip (probability)
+  fliplr: 0.5   # Horizontal flip (probability)
+  mosaic: 1.0   # Mosaic augmentation (probability)
+  mixup: 0.0    # MixUp augmentation (probability)
+  
+# Validation settings
+val:
+  batch: 32
+  imgsz: 640
+  save_json: false
+  plots: true
+  
+# Logging settings
+logging:
+  project: "runs/train"
+  name: "yolo11n-ttq"
+  save_period: 10  # Save checkpoint every N epochs
+  verbose: true
+  
+# Resume training
+resume: false  # Resume from last checkpoint
+pretrained: true  # Start from pretrained weights

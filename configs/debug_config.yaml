@@ -1,0 +1,29 @@
+# Quick Debug Configuration (COCO8)
+
+model:
+  name: "yolo11n.pt"
+  threshold: 0.05
+  quantize_first_layer: false
+
+data:
+  train: "coco8.yaml"
+  val: "coco8.yaml"
+  
+train:
+  epochs: 10
+  batch: 2
+  imgsz: 640
+  device: "0"
+  workers: 0
+  lr0: 0.01
+  patience: 50
+  
+val:
+  batch: 2
+  imgsz: 640
+  
+logging:
+  project: "runs/debug"
+  name: "yolo11n-ttq-debug"
+  save_period: 5
+  verbose: true
