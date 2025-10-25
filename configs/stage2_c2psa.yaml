@@ -1,0 +1,56 @@
+# Stage 2: BitNet Quantization of C2PSA Attention Blocks
+# Loads Stage 1 model and quantizes C2PSA blocks
+
+stage:
+  name: "stage2_bitnet_c2psa"
+  description: |
+    BitNet quantization applied to C2PSA attention blocks.
+    
+    Starting point: Stage 1 model with TTQ on backbone and neck
+    
+    Quantized components:
+    - C2PSA attention blocks (model.10.*)
+    
+    Quantization method:
+    - BitNet 1-bit weights
+    - Layer-wise scaling factors
+  previous_stage: "stage1_ttq_backbone_neck"
+  load_from_stage1: true
+
+# Model settings
+model:
+  name: "saved_models/stage1_ttq_backbone_neck/best.pt"  # Load from Stage 1
+  bitnet_scaling: "layer_wise"  # or "group_wise"
+
+# Data settings
+data:
+  train: "coco.yaml"
+  val: "coco.yaml"
+
+# Training hyperparameters
+train:
+  epochs: 50
+  batch: 16
+  imgsz: 640
+  device: "0"
+  workers: 8
+  
+  optimizer: "Adam"
+  lr0: 0.001  # Lower LR for fine-tuning
+  lrf: 0.01
+  weight_decay: 0.0005
+  
+  patience: 30
+
+val:
+  batch: 32
+  imgsz: 640
+
+logging:
+  project: "runs/train"
+  name: "stage2_bitnet_c2psa"
+  save_period: 5
+  verbose: true
+
+resume: false
+pretrained: false  # Already loading quantized model

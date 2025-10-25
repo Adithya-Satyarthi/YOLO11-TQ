@@ -1,5 +1,5 @@
 """
-Trained Ternary Quantization (TTQ) Layer
+Trained Ternary Quantization (TTQ) Layer - Exact Paper Implementation
 Based on "Trained Ternary Quantization" (Zhu et al., ICLR 2017)
 """
 
@@ -11,7 +11,7 @@ import torch.nn.functional as F
 class TTQConv2d(nn.Module):
     """
     Ternary quantized Conv2d layer with learnable scaling factors.
-    Quantizes weights to {-Wn, 0, +Wp} where Wp and Wn are learnable parameters.
+    Maintains full-precision weights, quantizes during forward pass.
     """
     
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
@@ -27,7 +27,7 @@ class TTQConv2d(nn.Module):
         self.groups = groups
         self.threshold = threshold
         
-        # Full precision latent weights (used during training)
+        # Full precision latent weights (never quantized in storage)
         self.weight = nn.Parameter(
             torch.Tensor(out_channels, in_channels // groups, *self.kernel_size)
         )
@@ -37,7 +37,7 @@ class TTQConv2d(nn.Module):
         else:
             self.register_parameter('bias', None)
         
-        # Learnable scaling factors for positive and negative weights
+        # Learnable scaling factors
         self.Wp = nn.Parameter(torch.Tensor(1))
         self.Wn = nn.Parameter(torch.Tensor(1))
         
@@ -49,59 +49,33 @@ class TTQConv2d(nn.Module):
         if self.bias is not None:
             nn.init.zeros_(self.bias)
         
-        # Initialize scaling factors
+        # Initialize scaling factors to 1.0
         nn.init.constant_(self.Wp, 1.0)
         nn.init.constant_(self.Wn, 1.0)
     
     def quantize_weight(self, weight):
         """
         Quantize full precision weights to ternary values {-Wn, 0, +Wp}
-        
-        Formula from paper:
-        wt = { +Wp  if w > Δ
-             {  0   if |w| ≤ Δ
-             { -Wn  if w < -Δ
-        
-        where Δ = threshold × max(|w|)
+        Used for inference/deployment only (not during training)
         """
-        # Normalize weights to [-1, 1]
-        max_val = weight.abs().max()
-        if max_val > 0:
-            weight_norm = weight / max_val
-        else:
-            weight_norm = weight
+        delta = self.threshold * weight.abs().max()
         
-        # Calculate threshold
-        delta = self.threshold * weight_norm.abs().max()
+        weight_quantized = torch.zeros_like(weight)
+        weight_quantized[weight > delta] = self.Wp
+        weight_quantized[weight < -delta] = -self.Wn
         
-        # Create ternary weight tensor
-        weight_ternary = torch.zeros_like(weight_norm)
-        weight_ternary[weight_norm > delta] = 1.0
-        weight_ternary[weight_norm < -delta] = -1.0
-        
-        # Scale by learnable factors
-        weight_quantized = torch.where(
-            weight_ternary > 0, 
-            self.Wp * weight_ternary,
-            torch.where(
-                weight_ternary < 0,
-                self.Wn * weight_ternary,
-                weight_ternary
-            )
-        )
-        
-        return weight_quantized, delta, max_val
+        return weight_quantized, delta
     
     def forward(self, x):
-        """Forward pass with quantized weights"""
-        if self.training:
-            # During training, quantize weights
-            weight_q, _, _ = self.quantize_weight(self.weight)
-        else:
-            # During inference, use quantized weights
-            with torch.no_grad():
-                weight_q, _, _ = self.quantize_weight(self.weight)
+        """
+        Forward pass: Use quantized weights via custom autograd function
+        """
+        # Quantize weights on-the-fly (TTQWeightFunction handles gradients)
+        weight_q = TTQWeightFunction.apply(
+            self.weight, self.Wp, self.Wn, self.threshold
+        )
         
+        # Use quantized weights for convolution
         return F.conv2d(x, weight_q, self.bias, self.stride,
                        self.padding, self.dilation, self.groups)
     
@@ -111,89 +85,83 @@ class TTQConv2d(nn.Module):
                 f'threshold={self.threshold}, Wp={self.Wp.item():.4f}, Wn={self.Wn.item():.4f}')
 
 
-class TTQConv2dWithGrad(TTQConv2d):
-    """
-    TTQ Conv2d with custom gradient computation for latent weights.
-    Implements Equation 8 from the paper for scaled gradients.
-    """
-    
-    def forward(self, x):
-        """Forward with custom backward for gradient scaling"""
-        if self.training:
-            weight_q = TTQWeightFunction.apply(
-                self.weight, self.Wp, self.Wn, self.threshold
-            )
-        else:
-            with torch.no_grad():
-                weight_q, _, _ = self.quantize_weight(self.weight)
-        
-        return F.conv2d(x, weight_q, self.bias, self.stride,
-                       self.padding, self.dilation, self.groups)
+# Alias for compatibility
+TTQConv2dWithGrad = TTQConv2d
 
 
 class TTQWeightFunction(torch.autograd.Function):
     """
-    Custom autograd function for TTQ weights with scaled gradients.
-    Implements gradient computation from Equation 7 and 8 in the paper.
+    Custom autograd function implementing TTQ gradient computation
+    
+    Forward: Quantize W -> W^t = {-Wn, 0, +Wp}
+    Backward: Compute gradients for W, Wp, and Wn
     """
     
     @staticmethod
     def forward(ctx, weight, Wp, Wn, threshold):
-        """
-        Forward pass: quantize weights to ternary values
-        """
-        # Normalize weights
-        max_val = weight.abs().max()
-        if max_val > 0:
-            weight_norm = weight / max_val
-        else:
-            weight_norm = weight
+        """Forward: Quantize full-precision weights to ternary values"""
+        # Calculate threshold delta
+        delta = threshold * weight.abs().max()
         
-        # Calculate threshold
-        delta = threshold * weight_norm.abs().max()
+        # Create masks for three regions
+        pos_mask = weight > delta
+        neg_mask = weight < -delta
         
-        # Create masks for positive, negative, and zero weights
-        pos_mask = weight_norm > delta
-        neg_mask = weight_norm < -delta
-        zero_mask = weight_norm.abs() <= delta
-        
-        # Quantize weights
-        weight_q = torch.zeros_like(weight_norm)
-        weight_q[pos_mask] = Wp
-        weight_q[neg_mask] = -Wn
+        # Quantize to ternary values
+        weight_quantized = torch.zeros_like(weight)
+        weight_quantized[pos_mask] = Wp
+        weight_quantized[neg_mask] = -Wn
         
         # Save for backward
-        ctx.save_for_backward(weight_norm, Wp, Wn, pos_mask, neg_mask, zero_mask)
-        ctx.delta = delta
+        ctx.save_for_backward(weight, Wp, Wn)
+        ctx.pos_mask = pos_mask
+        ctx.neg_mask = neg_mask
         
-        return weight_q
+        return weight_quantized
     
     @staticmethod
     def backward(ctx, grad_output):
         """
-        Backward pass: compute scaled gradients for latent weights and scaling factors
+        Backward: Compute gradients for W, Wp, and Wn
         
-        Equation 7 (scaling factor gradients):
-        ∂L/∂Wp = Σ(i∈Ip) ∂L/∂wt(i)
-        ∂L/∂Wn = Σ(i∈In) ∂L/∂wt(i)
-        
-        Equation 8 (latent weight gradients):
-        ∂L/∂w = { Wp × ∂L/∂wt  if w > Δ
-                {  1 × ∂L/∂wt  if |w| ≤ Δ
-                { Wn × ∂L/∂wt  if w < -Δ
+        From TTQ paper:
+        - Equation (2): Gradients for scaling factors
+        - Equation (3): Scaled gradients for full-precision weights
         """
-        weight_norm, Wp, Wn, pos_mask, neg_mask, zero_mask = ctx.saved_tensors
+        weight, Wp, Wn = ctx.saved_tensors
+        pos_mask = ctx.pos_mask
+        neg_mask = ctx.neg_mask
         
-        # Gradient for latent weights (Equation 8)
+        # Gradient w.r.t. full-precision weights (Equation 3)
+        # Scale gradient based on which region the weight is in
         grad_weight = grad_output.clone()
-        grad_weight[pos_mask] = grad_output[pos_mask] * Wp
-        grad_weight[neg_mask] = grad_output[neg_mask] * Wn
-        grad_weight[zero_mask] = grad_output[zero_mask] * 1.0  # Factor of 1 for zeros
         
-        # Gradient for Wp (Equation 7)
-        grad_Wp = (grad_output[pos_mask]).sum()
+        if pos_mask.any():
+            # Positive region: scale by Wp
+            grad_weight[pos_mask] = grad_output[pos_mask] * Wp
         
-        # Gradient for Wn (Equation 7)
-        grad_Wn = (grad_output[neg_mask]).sum()
+        if neg_mask.any():
+            # Negative region: scale by Wn  
+            grad_weight[neg_mask] = grad_output[neg_mask] * Wn
         
+        # Zero region: gradient passes through unchanged
+        
+        # Gradient w.r.t. Wp (Equation 2)
+        # Sum of gradients from all weights that map to +Wp
+        # CRITICAL: Must return tensor with shape [1]
+        if pos_mask.any():
+            grad_Wp = grad_output[pos_mask].sum().reshape(1)
+        else:
+            grad_Wp = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
+        
+        # Gradient w.r.t. Wn (Equation 2)
+        # Sum of gradients from all weights that map to -Wn
+        # CRITICAL: Must return tensor with shape [1]
+        # Note: negative because weights are -Wn, so ∂L/∂Wn = -Σ ∂L/∂W^t
+        if neg_mask.any():
+            grad_Wn = -grad_output[neg_mask].sum().reshape(1)
+        else:
+            grad_Wn = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
+        
+        # Return gradients: (weight, Wp, Wn, threshold)
         return grad_weight, grad_Wp, grad_Wn, None

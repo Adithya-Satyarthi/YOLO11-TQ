@@ -1,0 +1,25 @@
+# Pipeline Configuration: Run All Quantization Stages Sequentially
+
+pipeline:
+  name: "full_quantization_pipeline"
+  description: "Complete YOLO11 quantization pipeline: TTQ → BitNet"
+  
+  stages:
+    - config: "configs/stage1_ttq_backbone_neck.yaml"
+      enabled: true
+    
+    - config: "configs/stage2_bitnet_c2psa.yaml"
+      enabled: true
+  
+  # Global settings (can be overridden by individual stages)
+  global:
+    device: "0"
+    data:
+      train: "coco.yaml"
+      val: "coco.yaml"
+    
+    # Stop pipeline if stage fails
+    stop_on_error: true
+    
+    # Run validation between stages
+    validate_between_stages: true

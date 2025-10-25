@@ -8,6 +8,7 @@ yolo_env
 
 # Model weights and checkpoints
 models/
+saved_models/
 *.pt
 *.pth
 *.ckpt

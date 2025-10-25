@@ -13,9 +13,9 @@ def should_quantize_module(module_name, module, quantize_first_layer=False):
     Determine if a module should be quantized based on its name and type.
     
     Excludes:
-    - Detect head (model.23.*)
-    - C2PSA attention blocks (model.10.*)
-    - First conv layer (model.0.*) - optional
+    - Detect head
+    - C2PSA attention blocks
+    - First conv layer
     
     Args:
         module_name: Full name of the module
