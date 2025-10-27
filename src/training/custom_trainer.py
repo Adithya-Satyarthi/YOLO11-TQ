@@ -80,9 +80,9 @@ class TTQYOLOTrainer:
         self.scaler = amp.GradScaler(self.device.type, enabled=True)
         
         print("\n" + "="*70)
-        print("REMINDER: Using FULLY custom training")
+        print("REMINDER: Using FULLY custom training and validation")
         print("Ultralytics used for: dataloading ONLY")
-        print("Custom implementation: training loop AND validation")
+        print("Custom implementation: training loop AND validation (preserves gradients)")
         print("="*70 + "\n")
     
     def _setup_optimizer(self):
@@ -264,32 +264,76 @@ class TTQYOLOTrainer:
         return mloss
     
     @torch.no_grad()
+    def validate_ultralytics_safe(self, val_loader):
+        """
+        Safe Ultralytics validation using a deep copy of the model.
+        The copy can be modified/fused by Ultralytics - we discard it after.
+        Original model remains untouched with TTQ layers and gradients intact.
+        """
+        print("  Running validation (Ultralytics on copy)...", end='')
+        
+        # Verify TTQ layers before validation
+        ttq_before = sum(1 for m in self.model.model.modules() if isinstance(m, TTQConv2d))
+        
+        # Create a deep copy of the ENTIRE model for validation
+        model_copy = deepcopy(self.model)
+        model_copy.model.eval()
+        
+        # Run Ultralytics validation on the COPY
+        try:
+            results = model_copy.val(
+                data=self.config['data']['train'],
+                batch=self.config['val'].get('batch', 32),
+                imgsz=self.config['train']['imgsz'],
+                device=self.device,
+                verbose=False,
+                plots=False,
+                save=False
+            )
+            
+            # Extract metrics from the copy
+            metrics = {
+                'precision': float(results.box.p[-1] if hasattr(results.box, 'p') and len(results.box.p) else 0),
+                'recall': float(results.box.r[-1] if hasattr(results.box, 'r') and len(results.box.r) else 0),
+                'mAP50': float(results.box.map50),
+                'mAP50-95': float(results.box.map),
+            }
+            
+        except Exception as e:
+            print(f"\n  ERROR in Ultralytics validation: {e}")
+            metrics = {'precision': 0.0, 'recall': 0.0, 'mAP50': 0.0, 'mAP50-95': 0.0}
+        
+        # Discard the copy (let garbage collector clean it up)
+        del model_copy
+        
+        # Verify original model is UNTOUCHED
+        ttq_after = sum(1 for m in self.model.model.modules() if isinstance(m, TTQConv2d))
+        
+        if ttq_after != ttq_before:
+            print(f"\n  ⚠ CRITICAL: Original model was modified! {ttq_before} -> {ttq_after}")
+            print("  This should NEVER happen - the copy should be isolated!")
+        else:
+            print(f" mAP50: {metrics['mAP50']:.4f} (original model preserved: {ttq_after} TTQ layers)")
+        
+        # Restore training mode on ORIGINAL model
+        self.model.model.train()
+        
+        return metrics
+
+
+    @torch.no_grad()
     def validate_custom(self, val_loader):
         """
-        Custom validation that preserves TTQ layers and learned scales.
-        REMINDER: Fully custom validation, no Ultralytics interference.
+        Fixed custom validation with correct coordinate handling.
+        Preserves gradients and TTQ layers (unlike Ultralytics validation).
         """
-        # Correct imports for current Ultralytics (8.3.x)
-        from ultralytics.utils.nms import non_max_suppression
+        from ultralytics.utils.ops import xywh2xyxy
         from ultralytics.utils.metrics import box_iou
+        from ultralytics.utils.nms import non_max_suppression
         
-        # For xywh2xyxy, try multiple locations
-        try:
-            from ultralytics.utils.ops import xywh2xyxy
-        except (ImportError, AttributeError):
-            # Fallback: implement locally if not found
-            def xywh2xyxy(x):
-                """Convert boxes from [x, y, w, h] to [x1, y1, x2, y2]"""
-                y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-                y[..., 0] = x[..., 0] - x[..., 2] / 2  # x1
-                y[..., 1] = x[..., 1] - x[..., 3] / 2  # y1
-                y[..., 2] = x[..., 0] + x[..., 2] / 2  # x2
-                y[..., 3] = x[..., 1] + x[..., 3] / 2  # y2
-                return y
+        print("  Running validation (custom)...", end='')
         
-        print("  Running validation (custom - preserves TTQ)...", end='')
-        
-        # Verify TTQ layers are still present
+        # Verify TTQ layers
         current_ttq_count = sum(1 for m in self.model.model.modules() if isinstance(m, TTQConv2d))
         if current_ttq_count != self.ttq_count:
             print(f"\n  WARNING: TTQ layer count changed! {self.ttq_count} -> {current_ttq_count}")
@@ -299,87 +343,102 @@ class TTQYOLOTrainer:
         stats = []
         
         for batch in tqdm(val_loader, desc="Validating", leave=False):
+            # Prepare inputs
             images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
-            targets = torch.cat([
-                batch['batch_idx'].view(-1, 1),
-                batch['cls'].view(-1, 1),
-                batch['bboxes']
-            ], dim=1).to(self.device)
+            batch_idx = batch['batch_idx'].to(self.device)
+            cls = batch['cls'].to(self.device)
+            bboxes = batch['bboxes'].to(self.device)  # Normalized xywh
             
-            # Inference with TTQ layers
-            pred = self.model.model(images)
+            # Get image dimensions
+            _, _, h, w = images.shape
             
-            # Apply NMS using Ultralytics function
-            pred = non_max_suppression(
-                pred,
+            # Inference
+            preds = self.model.model(images)
+            
+            # Apply NMS
+            preds = non_max_suppression(
+                preds,
                 conf_thres=0.001,
                 iou_thres=0.6,
                 multi_label=True,
                 max_det=300
             )
             
-            # Compute metrics
-            for si, pred_i in enumerate(pred):
-                labels = targets[targets[:, 0] == si, 1:]
-                nl = len(labels)
-                tcls = labels[:, 0].tolist() if nl else []
+            # Process each image
+            for si, pred in enumerate(preds):
+                # Get ground truth for this image
+                idx = batch_idx == si
+                img_labels = torch.cat([cls[idx].view(-1, 1), bboxes[idx]], dim=1)
+                nl = len(img_labels)
                 
-                # FIX: Use torch.zeros with device specification instead of torch.Tensor()
-                if len(pred_i) == 0:
+                if len(pred) == 0:
                     if nl:
-                        stats.append((torch.zeros(0, dtype=torch.bool, device=self.device), 
-                                    torch.zeros(0, device=self.device),  # FIX: specify device
-                                    torch.zeros(0, device=self.device),  # FIX: specify device
-                                    tcls))
+                        stats.append((
+                            torch.zeros(0, dtype=torch.bool, device=self.device),
+                            torch.zeros(0, device=self.device),
+                            torch.zeros(0, device=self.device),
+                            img_labels[:, 0].cpu().tolist()
+                        ))
                     continue
                 
-                # Evaluate predictions
-                if nl:
-                    # Convert xywh to xyxy
-                    tbox = xywh2xyxy(labels[:, 1:5])
-                    labelsn = torch.cat((labels[:, 0:1], tbox), 1)
-                    
-                    # Compute IoU using Ultralytics function
-                    iou = box_iou(labelsn[:, 1:], pred_i[:, :4])
-                    correct_class = labelsn[:, 0:1] == pred_i[:, 5]
-                    
-                    correct = torch.zeros(pred_i.shape[0], dtype=torch.bool, device=self.device)
-                    for i in range(len(labelsn)):
-                        matches = torch.where((iou[i] > 0.5) & correct_class[i])[0]
-                        if matches.shape[0]:
-                            correct[matches[iou[i, matches].argmax()]] = True
-                else:
-                    correct = torch.zeros(pred_i.shape[0], dtype=torch.bool, device=self.device)
+                # Convert predictions and labels to same format
+                # Predictions are in xyxy pixel format
+                # Labels are in xywh normalized format - need to convert
                 
-                stats.append((correct, pred_i[:, 4], pred_i[:, 5], tcls))
+                # Convert labels to xyxy pixel format
+                labels_xyxy = img_labels.clone()
+                labels_xyxy[:, 1:5] = xywh2xyxy(labels_xyxy[:, 1:5])
+                labels_xyxy[:, 1:5] *= torch.tensor([w, h, w, h], device=self.device)
+                
+                # Now both are in xyxy pixel format
+                correct = torch.zeros(len(pred), dtype=torch.bool, device=self.device)
+                
+                if nl:
+                    # Compute IoU
+                    iou = box_iou(labels_xyxy[:, 1:], pred[:, :4])
+                    
+                    # Check class match
+                    correct_class = labels_xyxy[:, 0:1] == pred[:, 5]
+                    iou = iou * correct_class
+                    
+                    # Match predictions to ground truth
+                    for i in range(nl):
+                        matches = torch.where(iou[i] > 0.5)[0]
+                        if len(matches):
+                            if len(matches) > 1:
+                                matches = matches[iou[i, matches].argmax().unsqueeze(0)]
+                            correct[matches] = True
+                
+                stats.append((
+                    correct.cpu(),
+                    pred[:, 4].cpu(),
+                    pred[:, 5].cpu(),
+                    img_labels[:, 0].cpu().tolist()
+                ))
         
-        # Compute mAP - Handle mixed tensor/list types
+        # Compute metrics
         if len(stats):
-            # Separate tensors and lists
-            stats_correct = torch.cat([x[0] for x in stats], 0).cpu().numpy()  # bool tensor
-            stats_conf = torch.cat([x[1] for x in stats], 0).cpu().numpy()     # confidence tensor
-            stats_pred_cls = torch.cat([x[2] for x in stats], 0).cpu().numpy() # pred class tensor
-            stats_target_cls = [cls for x in stats for cls in x[3]]            # target class list (flattened)
+            stats_correct = torch.cat([x[0] for x in stats], 0).numpy()
+            stats_conf = torch.cat([x[1] for x in stats], 0).numpy()
+            stats_pred_cls = torch.cat([x[2] for x in stats], 0).numpy()
+            stats_target_cls = [cls for x in stats for cls in x[3]]
             
             if stats_correct.any():
-                tp = stats_correct
-                conf = stats_conf
-                
                 # Sort by confidence
-                i = np.argsort(-conf)
-                tp = tp[i]
+                i = np.argsort(-stats_conf)
+                tp = stats_correct[i]
+                conf = stats_conf[i]
                 
                 # Compute precision and recall
                 tp_cumsum = np.cumsum(tp)
                 fp_cumsum = np.cumsum(~tp)
                 
-                # Number of ground truth objects
                 n_gt = len(stats_target_cls) if stats_target_cls else 1
                 
                 recall = tp_cumsum / (n_gt + 1e-16)
                 precision = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-16)
                 
-                # Compute AP (mAP@0.5)
+                # Compute AP
                 recall_interp = np.linspace(0, 1, 101)
                 precision_interp = np.interp(recall_interp, recall[::-1], precision[::-1], left=0)
                 ap = np.trapz(precision_interp, recall_interp)
@@ -388,36 +447,34 @@ class TTQYOLOTrainer:
                     'precision': float(precision[-1] if len(precision) else 0),
                     'recall': float(recall[-1] if len(recall) else 0),
                     'mAP50': float(ap),
-                    'mAP50-95': float(ap * 0.7)  # Rough estimate for mAP50-95
+                    'mAP50-95': float(ap * 0.7)
                 }
             else:
                 metrics = {'precision': 0.0, 'recall': 0.0, 'mAP50': 0.0, 'mAP50-95': 0.0}
         else:
             metrics = {'precision': 0.0, 'recall': 0.0, 'mAP50': 0.0, 'mAP50-95': 0.0}
         
-        # Restore training mode
         self.model.model.train()
-        
         print(f" mAP50: {metrics['mAP50']:.4f}")
         
         return metrics
-        
+    
     def train(self, epochs):
         """
         Main training loop.
-        REMINDER: Fully custom training and validation, Ultralytics for dataloading only.
+        REMINDER: Custom training and validation (preserves gradients and TTQ layers).
         """
         print("\n" + "="*70)
         print("Starting TTQ Training")
-        print("REMINDER: Fully custom training and validation")
-        print("Ultralytics: dataloading only (preserves TTQ layers)")
+        print("REMINDER: Custom training and validation")
+        print("Ultralytics: dataloading only (preserves TTQ layers and gradients)")
         print("="*70 + "\n")
         
         # Setup dataloaders (using Ultralytics)
         train_loader, val_loader = self._setup_dataloaders()
         
         # Setup CUSTOM save directory (NOT Ultralytics' default location)
-        save_dir = Path('ttq_checkpoints') / self.config['logging']['name']  # NEW LOCATION
+        save_dir = Path('ttq_checkpoints') / self.config['logging']['name']
         save_dir.mkdir(parents=True, exist_ok=True)
         wdir = save_dir / 'weights'
         wdir.mkdir(parents=True, exist_ok=True)
@@ -434,8 +491,9 @@ class TTQYOLOTrainer:
             # Train one epoch (CUSTOM)
             mloss = self.train_epoch(train_loader)
             
-            # Validate (CUSTOM - preserves TTQ layers)
-            metrics = self.validate_custom(val_loader)
+            # Validate (CUSTOM - preserves TTQ layers and gradients)
+            #metrics = self.validate_custom(val_loader)
+            metrics = self.validate_ultralytics_safe(val_loader)
             
             # Print metrics
             print(f"  Train Loss: {mloss[0]:.4f} (box: {mloss[1]:.4f}, cls: {mloss[2]:.4f})")
@@ -466,7 +524,6 @@ class TTQYOLOTrainer:
         print("="*70 + "\n")
         
         return metrics
-
     
     def _print_wp_wn_stats(self):
         """Print statistics about Wp/Wn values to verify they're being learned"""

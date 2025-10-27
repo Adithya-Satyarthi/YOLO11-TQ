@@ -11,17 +11,17 @@ model:
   quantize_first_layer: false
 
 data:
-  train: "coco8.yaml"
-  val: "coco8.yaml"
+  train: "coco128.yaml"
+  val: "coco128.yaml"
 
 train:
-  epochs: 10
+  epochs: 20
   batch: 2
   imgsz: 640
   device: 0
   workers: 0
-  lr0: 0.01
-  patience: 50
+  lr0: 0.001
+  patience: 5
 
 val:
   batch: 2

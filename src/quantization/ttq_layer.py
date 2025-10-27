@@ -1,6 +1,6 @@
 """
-Trained Ternary Quantization (TTQ) Layer - Exact Paper Implementation
-Based on "Trained Ternary Quantization" (Zhu et al., ICLR 2017)
+Trained Ternary Quantization (TTQ) Layer - Final Fixed Implementation
+Uses Softplus to guarantee Wp/Wn > 0
 """
 
 import torch
@@ -10,12 +10,12 @@ import torch.nn.functional as F
 
 class TTQConv2d(nn.Module):
     """
-    Ternary quantized Conv2d layer with learnable scaling factors.
-    Maintains full-precision weights, quantizes during forward pass.
+    Ternary quantized Conv2d with GUARANTEED positive scaling factors
     """
     
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True, threshold=0.05):
+                 padding=0, dilation=1, groups=1, bias=True, threshold=0.05,
+                 pretrained_weight=None):
         super(TTQConv2d, self).__init__()
         
         self.in_channels = in_channels
@@ -27,7 +27,7 @@ class TTQConv2d(nn.Module):
         self.groups = groups
         self.threshold = threshold
         
-        # Full precision latent weights (never quantized in storage)
+        # Full precision weights
         self.weight = nn.Parameter(
             torch.Tensor(out_channels, in_channels // groups, *self.kernel_size)
         )
@@ -37,45 +37,83 @@ class TTQConv2d(nn.Module):
         else:
             self.register_parameter('bias', None)
         
-        # Learnable scaling factors
-        self.Wp = nn.Parameter(torch.Tensor(1))
-        self.Wn = nn.Parameter(torch.Tensor(1))
+        # Unconstrained parameters (can be any value)
+        # Wp = softplus(Wp_param) and Wn = softplus(Wn_param) will be positive
+        self.Wp_param = nn.Parameter(torch.Tensor(1))
+        self.Wn_param = nn.Parameter(torch.Tensor(1))
         
-        self.reset_parameters()
+        self.reset_parameters(pretrained_weight)
     
-    def reset_parameters(self):
+    def reset_parameters(self, pretrained_weight=None):
         """Initialize parameters"""
-        nn.init.kaiming_uniform_(self.weight, a=0)
-        if self.bias is not None:
+        if pretrained_weight is not None:
+            self.weight.data.copy_(pretrained_weight)
+            
+            with torch.no_grad():
+                w_abs = torch.abs(pretrained_weight)
+                delta = self.threshold * torch.max(w_abs)
+                
+                pos_mask = pretrained_weight > delta
+                neg_mask = pretrained_weight < -delta
+                
+                if pos_mask.any():
+                    Wp_init = torch.mean(w_abs[pos_mask])
+                else:
+                    Wp_init = torch.mean(w_abs)
+                
+                if neg_mask.any():
+                    Wn_init = torch.mean(w_abs[neg_mask])
+                else:
+                    Wn_init = torch.mean(w_abs)
+                
+                # Clamp to reasonable range
+                Wp_init = torch.clamp(Wp_init, min=0.01, max=1.0)
+                Wn_init = torch.clamp(Wn_init, min=0.01, max=1.0)
+                
+                # Initialize params such that softplus(param) ≈ init_value
+                # softplus(x) = log(1 + exp(x))
+                # Inverse: x = log(exp(init) - 1) ≈ init for init > 1
+                # For init < 1, use: x = log(exp(init) - 1) with clipping
+                self.Wp_param.data.fill_(self._inverse_softplus(Wp_init).item())
+                self.Wn_param.data.fill_(self._inverse_softplus(Wn_init).item())
+        else:
+            nn.init.kaiming_uniform_(self.weight, a=0)
+            # Initialize to give softplus(param) ≈ 0.3
+            self.Wp_param.data.fill_(self._inverse_softplus(torch.tensor(0.3)).item())
+            self.Wn_param.data.fill_(self._inverse_softplus(torch.tensor(0.3)).item())
+        
+        if self.bias is not None and pretrained_weight is None:
             nn.init.zeros_(self.bias)
-        
-        # Initialize scaling factors to 1.0
-        nn.init.constant_(self.Wp, 1.0)
-        nn.init.constant_(self.Wn, 1.0)
     
-    def quantize_weight(self, weight):
-        """
-        Quantize full precision weights to ternary values {-Wn, 0, +Wp}
-        Used for inference/deployment only (not during training)
-        """
-        delta = self.threshold * weight.abs().max()
-        
-        weight_quantized = torch.zeros_like(weight)
-        weight_quantized[weight > delta] = self.Wp
-        weight_quantized[weight < -delta] = -self.Wn
-        
-        return weight_quantized, delta
+    @staticmethod
+    def _inverse_softplus(y):
+        """Compute inverse of softplus: x such that softplus(x) = y"""
+        # softplus(x) = log(1 + exp(x))
+        # Inverse: x = log(exp(y) - 1)
+        # For numerical stability, use: x = y + log(1 - exp(-y)) for y > 0
+        return torch.log(torch.exp(y) - 1 + 1e-8)
+    
+    @property
+    def Wp(self):
+        """Get Wp (guaranteed positive via softplus)"""
+        return F.softplus(self.Wp_param)
+    
+    @property
+    def Wn(self):
+        """Get Wn (guaranteed positive via softplus)"""
+        return F.softplus(self.Wn_param)
     
     def forward(self, x):
-        """
-        Forward pass: Use quantized weights via custom autograd function
-        """
-        # Quantize weights on-the-fly (TTQWeightFunction handles gradients)
+        """Forward pass using softplus-constrained Wp/Wn"""
+        # Get guaranteed-positive scaling factors
+        Wp_pos = F.softplus(self.Wp_param)
+        Wn_pos = F.softplus(self.Wn_param)
+        
+        # Quantize weights
         weight_q = TTQWeightFunction.apply(
-            self.weight, self.Wp, self.Wn, self.threshold
+            self.weight, Wp_pos, Wn_pos, self.threshold
         )
         
-        # Use quantized weights for convolution
         return F.conv2d(x, weight_q, self.bias, self.stride,
                        self.padding, self.dilation, self.groups)
     
@@ -85,34 +123,23 @@ class TTQConv2d(nn.Module):
                 f'threshold={self.threshold}, Wp={self.Wp.item():.4f}, Wn={self.Wn.item():.4f}')
 
 
-# Alias for compatibility
 TTQConv2dWithGrad = TTQConv2d
 
 
 class TTQWeightFunction(torch.autograd.Function):
-    """
-    Custom autograd function implementing TTQ gradient computation
-    
-    Forward: Quantize W -> W^t = {-Wn, 0, +Wp}
-    Backward: Compute gradients for W, Wp, and Wn
-    """
+    """TTQ autograd function with gradient averaging"""
     
     @staticmethod
     def forward(ctx, weight, Wp, Wn, threshold):
-        """Forward: Quantize full-precision weights to ternary values"""
-        # Calculate threshold delta
         delta = threshold * weight.abs().max()
         
-        # Create masks for three regions
         pos_mask = weight > delta
         neg_mask = weight < -delta
         
-        # Quantize to ternary values
         weight_quantized = torch.zeros_like(weight)
         weight_quantized[pos_mask] = Wp
         weight_quantized[neg_mask] = -Wn
         
-        # Save for backward
         ctx.save_for_backward(weight, Wp, Wn)
         ctx.pos_mask = pos_mask
         ctx.neg_mask = neg_mask
@@ -121,44 +148,32 @@ class TTQWeightFunction(torch.autograd.Function):
     
     @staticmethod
     def backward(ctx, grad_output):
-        """
-        Backward: Compute gradients for W, Wp, and Wn
-        
-        From TTQ paper Equations (2) and (3):
-        - ∂L/∂W_p = Σ_{i∈I_p} ∂L/∂w^t(i)
-        - ∂L/∂W_n = Σ_{i∈I_n} ∂L/∂w^t(i) 
-        - ∂L/∂w̃ scaled by W_p, W_n, or 1 depending on region
-        """
         weight, Wp, Wn = ctx.saved_tensors
         pos_mask = ctx.pos_mask
         neg_mask = ctx.neg_mask
         
-        # Gradient w.r.t. full-precision weights (Equation 8 from paper)
+        # Gradient w.r.t. weights
         grad_weight = grad_output.clone()
         
-        # Positive region: scale by Wp
         if pos_mask.any():
             grad_weight = torch.where(pos_mask, grad_output * Wp, grad_weight)
         
-        # Negative region: scale by Wn
         if neg_mask.any():
             grad_weight = torch.where(neg_mask, grad_output * Wn, grad_weight)
         
-        # Zero region: gradient passes through (multiplied by 1)
-        
-        # Gradient w.r.t. Wp (Equation 7 from paper)
+        # Gradient w.r.t. Wp/Wn (averaged to prevent explosion)
         if pos_mask.any():
-            grad_Wp = grad_output[pos_mask].sum().reshape(1)
+            n_pos = pos_mask.sum().float()
+            grad_Wp = grad_output[pos_mask].sum() / n_pos
+            grad_Wp = grad_Wp.reshape(1)
         else:
             grad_Wp = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
         
-        # Gradient w.r.t. Wn (Equation 7 from paper)
-        # Note: In the paper, gradient is same sign because weight is -W_n
-        # So ∂L/∂W_n = -Σ ∂L/∂w^t where w^t = -W_n
         if neg_mask.any():
-            grad_Wn = -grad_output[neg_mask].sum().reshape(1)
+            n_neg = neg_mask.sum().float()
+            grad_Wn = -grad_output[neg_mask].sum() / n_neg
+            grad_Wn = grad_Wn.reshape(1)
         else:
             grad_Wn = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
         
         return grad_weight, grad_Wp, grad_Wn, None
-

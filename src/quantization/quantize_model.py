@@ -60,6 +60,7 @@ def should_quantize_module(module_name, module, quantize_first_layer=False):
 def replace_conv_with_ttq(module, name, threshold=0.05, quantize_first_layer=False):
     """
     Recursively replace Conv2d layers with TTQ quantized versions.
+    CRITICAL: Pass pretrained weights for proper Wp/Wn initialization.
     
     Args:
         module: PyTorch module
@@ -77,7 +78,11 @@ def replace_conv_with_ttq(module, name, threshold=0.05, quantize_first_layer=Fal
         
         if isinstance(child_module, nn.Conv2d):
             if should_quantize_module(full_name, child_module, quantize_first_layer):
-                # Create TTQ layer with same parameters
+                # CRITICAL: Extract pretrained weights BEFORE creating TTQ layer
+                pretrained_weight = child_module.weight.data.clone()
+                pretrained_bias = child_module.bias.data.clone() if child_module.bias is not None else None
+                
+                # Create TTQ layer with pretrained weights for proper initialization
                 ttq_layer = TTQConv2dWithGrad(
                     in_channels=child_module.in_channels,
                     out_channels=child_module.out_channels,
@@ -87,17 +92,17 @@ def replace_conv_with_ttq(module, name, threshold=0.05, quantize_first_layer=Fal
                     dilation=child_module.dilation,
                     groups=child_module.groups,
                     bias=child_module.bias is not None,
-                    threshold=threshold
+                    threshold=threshold,
+                    pretrained_weight=pretrained_weight  # Pass for proper Wp/Wn init
                 )
                 
-                # Copy weights from original layer
-                ttq_layer.weight.data.copy_(child_module.weight.data)
-                if child_module.bias is not None:
-                    ttq_layer.bias.data.copy_(child_module.bias.data)
+                # Copy bias separately (already handled in TTQConv2d.__init__)
+                if pretrained_bias is not None:
+                    ttq_layer.bias.data.copy_(pretrained_bias)
                 
                 # Replace the layer
                 setattr(module, child_name, ttq_layer)
-                print(f"  ✓ Quantized: {full_name}")
+                print(f"  ✓ Quantized: {full_name} (Wp={ttq_layer.Wp.item():.4f}, Wn={ttq_layer.Wn.item():.4f})")
                 quantized_count += 1
             else:
                 # Determine reason for skipping
@@ -157,8 +162,27 @@ def quantize_yolo_model(model_path, threshold=0.05, quantize_first_layer=False, 
         print("\n" + "="*60)
         print("Quantization complete!")
         print_quantization_stats(pytorch_model)
+        print_wp_wn_initialization_stats(pytorch_model)
     
     return model
+
+
+def print_wp_wn_initialization_stats(model):
+    """Print statistics about initialized Wp/Wn values"""
+    wp_vals = []
+    wn_vals = []
+    
+    for module in model.modules():
+        if isinstance(module, TTQConv2dWithGrad):
+            wp_vals.append(module.Wp.item())
+            wn_vals.append(module.Wn.item())
+    
+    if wp_vals:
+        import numpy as np
+        print(f"\nInitialized Wp/Wn Statistics (from pretrained weights):")
+        print(f"  Wp: min={min(wp_vals):.4f}, max={max(wp_vals):.4f}, mean={np.mean(wp_vals):.4f}")
+        print(f"  Wn: min={min(wn_vals):.4f}, max={max(wn_vals):.4f}, mean={np.mean(wn_vals):.4f}")
+        print(f"  ✓ Scales initialized based on pretrained weight statistics (not 1.0)")
 
 
 def print_quantization_stats(model):
@@ -197,14 +221,11 @@ def print_quantization_stats(model):
     
     if quantized_params > 0:
         # Calculate compression
-        # Full precision: 32 bits per weight
-        # Ternary: ~2 bits per weight (3 values: -Wn, 0, +Wp)
-        # Plus scaling factors (Wp, Wn) per layer: negligible
         compression_ratio = 32 / 2
         print(f"  Theoretical compression: ~{compression_ratio:.0f}x for quantized layers")
         
         # Actual model size estimate
-        fp_size_mb = (total_params * 4) / (1024 * 1024)  # 4 bytes per float32
+        fp_size_mb = (total_params * 4) / (1024 * 1024)
         ttq_size_mb = ((total_params - quantized_params) * 4 + quantized_params * 0.25) / (1024 * 1024)
         print(f"  Estimated model size: {fp_size_mb:.2f} MB (FP32) → {ttq_size_mb:.2f} MB (TTQ)")
         print(f"  Overall compression: {fp_size_mb/ttq_size_mb:.2f}x")
