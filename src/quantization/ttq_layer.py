@@ -124,44 +124,41 @@ class TTQWeightFunction(torch.autograd.Function):
         """
         Backward: Compute gradients for W, Wp, and Wn
         
-        From TTQ paper:
-        - Equation (2): Gradients for scaling factors
-        - Equation (3): Scaled gradients for full-precision weights
+        From TTQ paper Equations (2) and (3):
+        - ∂L/∂W_p = Σ_{i∈I_p} ∂L/∂w^t(i)
+        - ∂L/∂W_n = Σ_{i∈I_n} ∂L/∂w^t(i) 
+        - ∂L/∂w̃ scaled by W_p, W_n, or 1 depending on region
         """
         weight, Wp, Wn = ctx.saved_tensors
         pos_mask = ctx.pos_mask
         neg_mask = ctx.neg_mask
         
-        # Gradient w.r.t. full-precision weights (Equation 3)
-        # Scale gradient based on which region the weight is in
+        # Gradient w.r.t. full-precision weights (Equation 8 from paper)
         grad_weight = grad_output.clone()
         
+        # Positive region: scale by Wp
         if pos_mask.any():
-            # Positive region: scale by Wp
-            grad_weight[pos_mask] = grad_output[pos_mask] * Wp
+            grad_weight = torch.where(pos_mask, grad_output * Wp, grad_weight)
         
+        # Negative region: scale by Wn
         if neg_mask.any():
-            # Negative region: scale by Wn  
-            grad_weight[neg_mask] = grad_output[neg_mask] * Wn
+            grad_weight = torch.where(neg_mask, grad_output * Wn, grad_weight)
         
-        # Zero region: gradient passes through unchanged
+        # Zero region: gradient passes through (multiplied by 1)
         
-        # Gradient w.r.t. Wp (Equation 2)
-        # Sum of gradients from all weights that map to +Wp
-        # CRITICAL: Must return tensor with shape [1]
+        # Gradient w.r.t. Wp (Equation 7 from paper)
         if pos_mask.any():
             grad_Wp = grad_output[pos_mask].sum().reshape(1)
         else:
             grad_Wp = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
         
-        # Gradient w.r.t. Wn (Equation 2)
-        # Sum of gradients from all weights that map to -Wn
-        # CRITICAL: Must return tensor with shape [1]
-        # Note: negative because weights are -Wn, so ∂L/∂Wn = -Σ ∂L/∂W^t
+        # Gradient w.r.t. Wn (Equation 7 from paper)
+        # Note: In the paper, gradient is same sign because weight is -W_n
+        # So ∂L/∂W_n = -Σ ∂L/∂w^t where w^t = -W_n
         if neg_mask.any():
             grad_Wn = -grad_output[neg_mask].sum().reshape(1)
         else:
             grad_Wn = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
         
-        # Return gradients: (weight, Wp, Wn, threshold)
         return grad_weight, grad_Wp, grad_Wn, None
+
