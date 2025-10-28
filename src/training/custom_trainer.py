@@ -532,8 +532,8 @@ class TTQYOLOTrainer:
         
         for module in self.model.model.modules():
             if isinstance(module, TTQConv2d):
-                wp_vals.append(module.Wp.item())
-                wn_vals.append(module.Wn.item())
+                wp_vals.append(module.Wp)
+                wn_vals.append(module.Wn)
         
         if wp_vals:
             print(f"  Wp: min={min(wp_vals):.4f}, max={max(wp_vals):.4f}, mean={np.mean(wp_vals):.4f}, std={np.std(wp_vals):.4f}")
