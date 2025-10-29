@@ -277,6 +277,26 @@ class TTQYOLOTrainer:
         
         # Create a deep copy of the ENTIRE model for validation
         model_copy = deepcopy(self.model)
+        # After model_copy = deepcopy(model) or similar
+        for name, module in model_copy.named_modules():
+            if isinstance(module, TTQConv2d):
+                with torch.no_grad():
+                    # Quantize and replace weight
+                    Wp = module.Wp_param + 1e-8
+                    Wn = module.Wn_param + 1e-8
+                    w_abs = torch.abs(module.weight)
+                    delta = module.threshold * torch.mean(w_abs)
+                    
+                    pos_mask = module.weight > delta
+                    neg_mask = module.weight < -delta
+                    
+                    weight_q = torch.zeros_like(module.weight)
+                    weight_q[pos_mask] = Wp
+                    weight_q[neg_mask] = -Wn
+                    
+                    # Replace with quantized version
+                    module.weight.data = weight_q
+
         model_copy.model.eval()
         
         # Run Ultralytics validation on the COPY

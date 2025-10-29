@@ -1,9 +1,9 @@
 """
-Trained Ternary Quantization (TTQ) Layer - FINAL FIXED VERSION
+Trained Ternary Quantization (TTQ) Layer - FINAL VERSION
 Critical fixes:
-1. Proper gradient flow for Wp/Wn
-2. Mean-based threshold (less aggressive - ~35% zeros instead of 60%)
-3. Correct parameter initialization
+1. Paper uses SUM for Wp/Wn gradients, not AVERAGE
+2. Removed softplus - use direct parameters (diagnostic proved positivity)
+3. Simple offset for numerical stability
 """
 
 import torch
@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 class TTQConv2d(nn.Module):
     """
-    TTQ Conv2d with GUARANTEED positive Wp/Wn and proper gradient flow
+    TTQ Conv2d with direct parameter learning
     """
     
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
@@ -28,7 +28,7 @@ class TTQConv2d(nn.Module):
         self.padding = padding
         self.dilation = dilation
         self.groups = groups
-        self.threshold = threshold  # Now represents multiplier for mean (default 0.7)
+        self.threshold = threshold
         
         # Full precision weights
         self.weight = nn.Parameter(
@@ -40,7 +40,7 @@ class TTQConv2d(nn.Module):
         else:
             self.register_parameter('bias', None)
         
-        # CRITICAL FIX: Use regular Parameters, apply softplus in forward
+        # Direct scale parameters (no transformation)
         self.Wp_param = nn.Parameter(torch.Tensor(1))
         self.Wn_param = nn.Parameter(torch.Tensor(1))
         
@@ -48,8 +48,7 @@ class TTQConv2d(nn.Module):
     
     def reset_parameters(self, pretrained_weight=None):
         """
-        Initialize with MEAN-BASED threshold (from TWN paper)
-        This avoids creating too many zeros
+        Initialize with mean-based threshold
         """
         if pretrained_weight is not None:
             self.weight.data.copy_(pretrained_weight)
@@ -57,9 +56,7 @@ class TTQConv2d(nn.Module):
             with torch.no_grad():
                 w_abs = torch.abs(pretrained_weight)
                 
-                # CRITICAL FIX: Use mean-based threshold (TWN/TTQ papers)
-                # OLD: delta = 0.05 * max(|W|) → 60% zeros → mAP drops 79%!
-                # NEW: delta = 0.7 * mean(|W|) → 35% zeros → much better!
+                # Mean-based threshold
                 delta = self.threshold * torch.mean(w_abs)
                 
                 pos_mask = pretrained_weight > delta
@@ -75,39 +72,29 @@ class TTQConv2d(nn.Module):
                 else:
                     Wn_init = torch.mean(w_abs)
                 
-                # Clamp to reasonable range (increased max for larger scales)
-                #Wp_init = torch.clamp(Wp_init, min=0.05, max=2.0)
-                #Wn_init = torch.clamp(Wn_init, min=0.05, max=2.0)
-                
-                # Initialize params for softplus
-                self.Wp_param.data.fill_(self._inverse_softplus(Wp_init).item())
-                self.Wn_param.data.fill_(self._inverse_softplus(Wn_init).item())
+                # Direct initialization (no transformation)
+                self.Wp_param.data.fill_(Wp_init.item())
+                self.Wn_param.data.fill_(Wn_init.item())
         else:
             nn.init.kaiming_uniform_(self.weight, a=0)
-            # Initialize to give softplus ≈ 0.5
-            self.Wp_param.data.fill_(self._inverse_softplus(torch.tensor(0.5)).item())
-            self.Wn_param.data.fill_(self._inverse_softplus(torch.tensor(0.5)).item())
+            # Initialize to reasonable default
+            self.Wp_param.data.fill_(0.5)
+            self.Wn_param.data.fill_(0.5)
         
         if self.bias is not None and pretrained_weight is None:
             nn.init.zeros_(self.bias)
     
-    @staticmethod
-    def _inverse_softplus(y):
-        """Inverse softplus for initialization"""
-        return torch.log(torch.exp(y) - 1 + 1e-8)
-    
     def forward(self, x):
         """
-        Forward with GUARANTEED gradient flow
-        CRITICAL: Apply softplus HERE, not in @property
+        Forward - use raw parameters with small offset
         """
-        # Apply softplus to get positive Wp/Wn WITH GRADIENT TRACKING
-        Wp_pos = F.softplus(self.Wp_param)
-        Wn_pos = F.softplus(self.Wn_param)
+        # Add small offset for numerical stability
+        Wp_use = self.Wp_param + 1e-8
+        Wn_use = self.Wn_param + 1e-8
         
         # Quantize weights using custom autograd function
         weight_q = TTQWeightFunction.apply(
-            self.weight, Wp_pos, Wn_pos, self.threshold
+            self.weight, Wp_use, Wn_use, self.threshold
         )
         
         return F.conv2d(x, weight_q, self.bias, self.stride,
@@ -117,13 +104,13 @@ class TTQConv2d(nn.Module):
     def Wp(self):
         """Get current Wp value (for logging only)"""
         with torch.no_grad():
-            return F.softplus(self.Wp_param).item()
+            return self.Wp_param.item()
     
     @property
     def Wn(self):
         """Get current Wn value (for logging only)"""
         with torch.no_grad():
-            return F.softplus(self.Wn_param).item()
+            return self.Wn_param.item()
     
     def extra_repr(self):
         return (f'in_channels={self.in_channels}, out_channels={self.out_channels}, '
@@ -136,18 +123,17 @@ TTQConv2dWithGrad = TTQConv2d
 
 class TTQWeightFunction(torch.autograd.Function):
     """
-    TTQ autograd function with MEAN-BASED threshold
+    TTQ autograd function with mean-based threshold
     """
     
     @staticmethod
     def forward(ctx, weight, Wp, Wn, threshold):
         """
         Forward: Quantize to ternary using mean-based threshold
-        CRITICAL: Must match initialization strategy!
         """
-        # CRITICAL FIX: Use mean-based threshold (consistent with init)
+        # Mean-based threshold
         w_abs = torch.abs(weight)
-        delta = threshold * torch.mean(w_abs)  # NOT max!
+        delta = threshold * torch.mean(w_abs)
         
         pos_mask = weight > delta
         neg_mask = weight < -delta
@@ -166,36 +152,33 @@ class TTQWeightFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         """
-        Backward: Compute gradients
+        Backward: Compute gradients according to paper (Equations 8 & 9)
+        CRITICAL: Use SUM (not average) per paper
         """
         weight, Wp, Wn = ctx.saved_tensors
         pos_mask = ctx.pos_mask
         neg_mask = ctx.neg_mask
         
-        # Gradient w.r.t. full-precision weights
+        # Gradient w.r.t. full-precision weights (Paper Equation 8)
         grad_weight = grad_output.clone()
         
         if pos_mask.any():
-            grad_weight = torch.where(pos_mask, grad_output * Wp, grad_weight)
+            grad_weight[pos_mask] = grad_output[pos_mask] * Wp
         
         if neg_mask.any():
-            grad_weight = torch.where(neg_mask, grad_output * Wn, grad_weight)
+            grad_weight[neg_mask] = grad_output[neg_mask] * Wn
         
-        # Gradient w.r.t. Wp (averaged to prevent explosion)
+        # Gradient w.r.t. Wp and Wn (Paper Equation 9) - Use SUM
         if pos_mask.any():
-            n_pos = pos_mask.sum().float()
-            grad_Wp = grad_output[pos_mask].sum() / n_pos
+            grad_Wp = grad_output[pos_mask].sum()
             grad_Wp = grad_Wp.reshape(1)
         else:
             grad_Wp = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
         
-        # Gradient w.r.t. Wn (averaged)
         if neg_mask.any():
-            n_neg = neg_mask.sum().float()
-            grad_Wn = -grad_output[neg_mask].sum() / n_neg
+            grad_Wn = -grad_output[neg_mask].sum()
             grad_Wn = grad_Wn.reshape(1)
         else:
             grad_Wn = torch.zeros(1, dtype=grad_output.dtype, device=grad_output.device)
         
-        # Return: grad_weight, grad_Wp, grad_Wn, grad_threshold (None)
         return grad_weight, grad_Wp, grad_Wn, None
