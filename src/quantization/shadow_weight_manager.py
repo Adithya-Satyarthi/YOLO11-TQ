@@ -209,18 +209,20 @@ class ShadowWeightManager:
             # Equation 8: Gradients for master weights (∂L/∂w)
             # Chain rule: ∂L/∂w = ∂L/∂w_t × ∂w_t/∂w
             grad_w = torch.zeros_like(grad_wt)
-            grad_w[pos_mask] = grad_wt[pos_mask] * wp   # w_t = Wp, so ∂w_t/∂w ≈ Wp
+            #grad_w[pos_mask] = grad_wt[pos_mask] * wp   # w_t = Wp, so ∂w_t/∂w ≈ Wp
+            grad_w[pos_mask] = grad_wt[pos_mask]
             grad_w[zero_mask] = grad_wt[zero_mask] * 1.0  # w_t = w, so ∂w_t/∂w = 1
-            grad_w[neg_mask] = grad_wt[neg_mask] * wn   # w_t = -Wn, so ∂w_t/∂w ≈ Wn
-            
+            #grad_w[neg_mask] = grad_wt[neg_mask] * wn   # w_t = -Wn, so ∂w_t/∂w ≈ Wn
+            grad_w[neg_mask] = grad_wt[neg_mask]
+
             master_grads[name] = grad_w
             
             # Equation 7: Gradients for scaling factors
             # ∂L/∂Wp = Σ(∂L/∂w_t) for all w > δ (since w_t = Wp for those weights)
-            wp_grads[name] = torch.sum(grad_wt[pos_mask]) if pos_mask.any() else torch.tensor(0.0).to(self.device)
+            wp_grads[name] = torch.mean(grad_wt[pos_mask]) if pos_mask.any() else torch.tensor(0.0).to(self.device)
             
             # ∂L/∂Wn = Σ(-∂L/∂w_t) for all w < -δ (since w_t = -Wn, chain rule gives negative)
-            wn_grads[name] = torch.sum(-grad_wt[neg_mask]) if neg_mask.any() else torch.tensor(0.0).to(self.device)
+            wn_grads[name] = torch.mean(-grad_wt[neg_mask]) if neg_mask.any() else torch.tensor(0.0).to(self.device)
         
         return master_grads, wp_grads, wn_grads
 

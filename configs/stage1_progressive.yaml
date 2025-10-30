@@ -34,14 +34,14 @@ stages:
     quantization:
       threshold: 0.7  # FIXED: 0.7 * mean(|W|) from TWN paper (~35% zeros)
       quantize_first_layer: false
-      target_layers: [17, 19, 20, 22] #[2, 3, 4, 5]  # Shallow backbone: layers 2-5
+      target_layers: [17, 19, 20, 22] # Shallow backbone: layers 2-5
       # Expected: ~12-15 layers quantized out of 88 total Conv2d layers
     
     train:
       epochs: 1
       batch: 8
       imgsz: 640
-      lr0: 0.001  # Standard LR for initial quantization
+      lr0: 0.0001  # Standard LR for initial quantization
       weight_decay: 0.0005
       momentum: 0.937
       optimizer: 'Adam'
