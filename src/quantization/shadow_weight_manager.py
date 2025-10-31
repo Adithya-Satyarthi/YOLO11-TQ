@@ -1,3 +1,5 @@
+# src/quantization/shadow_weight_manager.py
+
 """
 Shadow Weight Manager for TTQ-YOLO
 Manages master (FP32) and shadow (ternary) models with external Wp/Wn scaling factors
@@ -17,7 +19,8 @@ class ShadowWeightManager:
     - External Wp/Wn: Learned scaling factors stored separately
     """
     
-    def __init__(self, master_model, shadow_model, threshold=0.7, device='cuda', target_layers=None):
+    def __init__(self, master_model, shadow_model, threshold=0.7, device='cuda', 
+                 target_layers=None, quantize_1x1=False):
         """
         Args:
             master_model: YOLO model with FP32 weights
@@ -25,12 +28,14 @@ class ShadowWeightManager:
             threshold: Multiplier for mean-based quantization (0.7 from TWN paper)
             device: Device to use
             target_layers: List of layer indices to quantize (for progressive quantization)
+            quantize_1x1: Whether to quantize 1x1 convolutions (default: False)
         """
         self.master_model = master_model
         self.shadow_model = shadow_model
         self.threshold = threshold
         self.device = device
         self.target_layers = target_layers
+        self.quantize_1x1 = quantize_1x1  # NEW
         
         # External scaling factors (not part of model state_dict)
         self.wp_dict = {}  # {layer_name: Wp tensor}
@@ -44,15 +49,19 @@ class ShadowWeightManager:
         
         print(f"✓ Shadow Weight Manager initialized")
         print(f"  Quantized layers: {len(self.quantized_layers)}")
+        print(f"  1x1 convolution quantization: {'Enabled' if quantize_1x1 else 'Disabled'}")
     
     def _should_quantize(self, name, module):
         """Determine if a layer should be quantized"""
         if not isinstance(module, nn.Conv2d):
             return False
         
-        # Skip 1x1 convolutions
+        # Check 1x1 convolutions
         k = module.kernel_size
-        if (isinstance(k, tuple) and k[0] == 1 and k[1] == 1) or k == 1:
+        is_1x1 = (isinstance(k, tuple) and k[0] == 1 and k[1] == 1) or k == 1
+        
+        # Skip 1x1 if not enabled
+        if is_1x1 and not self.quantize_1x1:
             return False
         
         # Parse layer index
@@ -159,73 +168,74 @@ class ShadowWeightManager:
     
     def compute_ttq_gradients(self, shadow_grads):
         """
-        Manually compute TTQ gradients using Equations 7 & 8 from TTQ paper.
-        
-        TTQ Equation 8 (gradient for latent weights):
-            ∂L/∂w = Wp * ∂L/∂w_t  if w > δ
-            ∂L/∂w = 1  * ∂L/∂w_t  if |w| ≤ δ
-            ∂L/∂w = Wn * ∂L/∂w_t  if w < -δ
-        
-        TTQ Equation 7 (gradient for scaling factors):
-            ∂L/∂Wp = Σ(∂L/∂w_t) for all w > δ
-            ∂L/∂Wn = Σ(-∂L/∂w_t) for all w < -δ (negative because w_t = -Wn)
-        
-        Args:
-            shadow_grads: Gradients computed on shadow model (unused, kept for compatibility)
-        
-        Returns:
-            master_grads: Gradients for master model (Equation 8)
-            wp_grads: Gradients for Wp (Equation 7)
-            wn_grads: Gradients for Wn (Equation 7)
+        Compute TTQ gradients with stabilization to prevent Wp/Wn explosion.
         """
         master_grads = {}
         wp_grads = {}
         wn_grads = {}
         
         for name in self.quantized_layers:
-            # Get modules and weights
             master_module = dict(self.master_model.named_modules())[name]
             shadow_module = dict(self.shadow_model.named_modules())[name]
             
             if shadow_module.weight.grad is None:
                 continue
             
-            # Get gradient on quantized weight (∂L/∂w_t)
             grad_wt = shadow_module.weight.grad.data
-            
-            # Get master weight and scaling factors
             w = master_module.weight.data
             wp = self.wp_dict[name].data
             wn = self.wn_dict[name].data
             
-            # Compute masks based on threshold
+            # Compute masks
             w_abs = torch.abs(w)
             delta = self.threshold * torch.mean(w_abs)
-            
             pos_mask = w > delta
             neg_mask = w < -delta
             zero_mask = torch.abs(w) <= delta
             
-            # Equation 8: Gradients for master weights (∂L/∂w)
-            # Chain rule: ∂L/∂w = ∂L/∂w_t × ∂w_t/∂w
+            # Count weights in each partition
+            n_pos = pos_mask.sum().float().clamp(min=1.0)
+            n_neg = neg_mask.sum().float().clamp(min=1.0)
+            
+            # Equation 8: Scaled gradients for master weights
             grad_w = torch.zeros_like(grad_wt)
-            #grad_w[pos_mask] = grad_wt[pos_mask] * wp   # w_t = Wp, so ∂w_t/∂w ≈ Wp
-            grad_w[pos_mask] = grad_wt[pos_mask]
-            grad_w[zero_mask] = grad_wt[zero_mask] * 1.0  # w_t = w, so ∂w_t/∂w = 1
-            #grad_w[neg_mask] = grad_wt[neg_mask] * wn   # w_t = -Wn, so ∂w_t/∂w ≈ Wn
-            grad_w[neg_mask] = grad_wt[neg_mask]
-
+            grad_w[pos_mask] = grad_wt[pos_mask] * wp
+            grad_w[zero_mask] = grad_wt[zero_mask] * 1.0
+            grad_w[neg_mask] = grad_wt[neg_mask] * wn
+            
             master_grads[name] = grad_w
             
-            # Equation 7: Gradients for scaling factors
-            # ∂L/∂Wp = Σ(∂L/∂w_t) for all w > δ (since w_t = Wp for those weights)
-            wp_grads[name] = torch.mean(grad_wt[pos_mask]) if pos_mask.any() else torch.tensor(0.0).to(self.device)
+            # Equation 7: Compute gradients for Wp/Wn with STABILIZATION
+            if pos_mask.any():
+                # Mean gradient for positive weights
+                grad_wp_raw = torch.mean(grad_wt[pos_mask])
+                
+                # CRITICAL: Normalize by current Wp value to prevent explosion
+                # This makes the update relative to current scale
+                grad_wp_normalized = grad_wp_raw / (wp.abs() + 1e-6)
+                
+                # Clip individual gradient to prevent single-step explosion
+                grad_wp_clipped = torch.clamp(grad_wp_normalized, -1.0, 1.0)
+                
+                wp_grads[name] = grad_wp_clipped
+            else:
+                wp_grads[name] = torch.tensor(0.0).to(self.device)
             
-            # ∂L/∂Wn = Σ(-∂L/∂w_t) for all w < -δ (since w_t = -Wn, chain rule gives negative)
-            wn_grads[name] = torch.mean(-grad_wt[neg_mask]) if neg_mask.any() else torch.tensor(0.0).to(self.device)
+            if neg_mask.any():
+                # Mean gradient for negative weights (note: -grad_wt because w_t = -Wn)
+                grad_wn_raw = torch.mean(-grad_wt[neg_mask])
+                
+                # CRITICAL: Normalize by current Wn value
+                grad_wn_normalized = grad_wn_raw / (wn.abs() + 1e-6)
+                
+                # Clip individual gradient
+                grad_wn_clipped = torch.clamp(grad_wn_normalized, -1.0, 1.0)
+                
+                wn_grads[name] = grad_wn_clipped
+            else:
+                wn_grads[name] = torch.tensor(0.0).to(self.device)
         
         return master_grads, wp_grads, wn_grads
-
     
     def apply_gradients_to_master(self, master_grads):
         """Apply computed gradients to master model weights"""
