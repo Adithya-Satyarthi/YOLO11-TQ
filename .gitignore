@@ -8,13 +8,15 @@ yolo_env
 
 # Model weights and checkpoints
 models/
-saved_models/
 ttq_shadow_checkpoints/
 ttq_checkpoints/
+checkpoints/
 *.pt
 *.pth
 *.ckpt
 *.h5
+!models/
+!models/*.pt
 
 # Experiment tracking and logs
 wandb/

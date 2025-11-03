@@ -1,0 +1,35 @@
+stage: "2_baseline_c2psa"
+name: "C2PSA_BitLinear_TTQ_Baseline"
+
+model:
+  weights: "yolo11n.pt"
+
+data:
+  train: "coco.yaml"
+  val: "coco.yaml"
+
+quantization:
+  technique: "bitlinear_ttq_c2psa"
+  target_module: "C2PSA"
+  threshold: 0.7
+  activation_bits: 8
+
+train:
+  epochs: 50
+  batch: 8
+  lr0: 0.0001
+  device: 'cuda'
+  workers: 8
+  imgsz: 640
+  patience: 4
+  weight_decay: 0.0005
+
+val:
+  batch: 16
+
+logging:
+  use_wandb: false
+  wandb_project: "ttq-yolo-c2psa"
+  wandb_entity: null
+  name: "stage2_c2psa"
+  save_dir: "checkpoints/stage2_c2psa/"

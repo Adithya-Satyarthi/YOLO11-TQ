@@ -4,7 +4,7 @@
 # MODEL CONFIGURATION
 # ============================================================================
 # Change this to switch between model sizes: 'n', 's', 'm', 'l', 'x'
-model_size: 'n'  # YOLO11 size (nano, small, medium, large, xlarge)
+model_size: 'x'  # YOLO11 size (nano, small, medium, large, xlarge)
 
 # Base paths (automatically includes model size)
 base:
@@ -38,7 +38,7 @@ stages:
       optimizer: 'Adam'
       workers: 8
       device: 0
-      patience: 30
+      patience: 4
     
     val:
       batch: 16
@@ -64,8 +64,8 @@ stages:
     quantization:
       threshold: 0.715
       quantize_first_layer: false
-      quantize_1x1_conv: true
-      target_layers: [7, 8, 9, 13, 16, 17, 19, 20, 22]
+      quantize_1x1_conv: false
+      target_layers: [7, 8, 9, 13, 16]
     
     train:
       epochs: 200
@@ -76,7 +76,7 @@ stages:
       optimizer: 'Adam'
       workers: 8
       device: 0
-      patience: 30
+      patience: 4
     
     val:
       batch: 16
@@ -102,8 +102,8 @@ stages:
     quantization:
       threshold: 0.7
       quantize_first_layer: false
-      quantize_1x1_conv: true  # Enable 1x1 quantization in final stage
-      target_layers: [2, 3, 4, 5, 6, 7, 8, 9, 13, 16, 17, 19, 20, 22]
+      quantize_1x1_conv: false  # Enable 1x1 quantization in final stage
+      target_layers: [2, 3, 4, 5, 6]
     
     train:
       epochs: 300
@@ -114,7 +114,7 @@ stages:
       optimizer: 'Adam'
       workers: 8
       device: 0
-      patience: 60
+      patience: 4
     
     val:
       batch: 16

@@ -10,6 +10,9 @@ from pathlib import Path
 import yaml
 import sys
 import re
+import warnings
+
+warnings.filterwarnings('ignore', category=Warning)
 
 sys.path.insert(0, str(Path(__file__).parent))
 
