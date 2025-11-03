@@ -2,7 +2,6 @@
 
 """
 Manager for Standard BitLinear (FIXED scales)
-Same master-shadow training loop as TTQ, but scales are NOT learned
 """
 
 import torch
@@ -13,11 +12,6 @@ import numpy as np
 class BitLinearStandardManager:
     """
     Manages standard BitLinear training with FIXED scales
-    
-    Same as BitLinearTTQManager but:
-    - Scales are FIXED (not learned parameters)
-    - No gradient computation for scales
-    - Only master weights are updated
     """
     
     def __init__(self, master_model, shadow_model, threshold=0.7, device='cuda'):
@@ -29,8 +23,8 @@ class BitLinearStandardManager:
         self.quantized_layers = []
         self._initialize_fixed_scales()
         
-        print(f"✓ Standard BitLinear Manager initialized")
-        print(f"  Quantized layers: {len(self.quantized_layers)}")
+        print(f"Standard BitLinear Manager initialized")
+        print(f"Quantized layers: {len(self.quantized_layers)}")
     
     def _get_master_conv_modules(self):
         """Get Conv2d modules from master"""
@@ -58,7 +52,7 @@ class BitLinearStandardManager:
     
     def _initialize_fixed_scales(self):
         """
-        Initialize FIXED scales from master weights (Paper formula)
+        Initialize scales from master weights
         scale = E[|w|] (mean absolute value of weights)
         """
         master_modules = self._get_master_conv_modules()
@@ -72,13 +66,9 @@ class BitLinearStandardManager:
             
             self.quantized_layers.append(name)
             
-            print(f"  ✓ Init {name}: Fixed scale={scale:.6f}")
+            print(f"Init {name}: Fixed scale={scale:.6f}")
     
     def quantize_master_to_shadow(self):
-        """
-        Quantize master (FP32) → shadow (ternary) with FIXED scales
-        Same as TTQ but scales don't change
-        """
         with torch.no_grad():
             master_modules = self._get_master_conv_modules()
             shadow_modules = self._get_shadow_bitlinear_modules()
@@ -90,15 +80,14 @@ class BitLinearStandardManager:
                 master_conv = master_modules[name]
                 shadow_bitlinear = shadow_modules[name]
                 
-                # Get FP32 weights and FIXED scale
                 w = master_conv.weight.data
-                scale = shadow_bitlinear.scale  # FIXED, not learned
+                scale = shadow_bitlinear.scale 
                 
                 # Compute threshold
                 w_abs = torch.abs(w)
                 delta = self.threshold * torch.mean(w_abs)
                 
-                # Quantize with FIXED scale
+                # Quantize with fixed scale
                 w_q = torch.zeros_like(w)
                 pos_mask = w > delta
                 neg_mask = w < -delta
@@ -115,10 +104,7 @@ class BitLinearStandardManager:
     
     def compute_standard_gradients(self):
         """
-        Compute gradients for FIXED scale (standard BitLinear)
-        
-        Unlike TTQ, scales don't have gradients - only weights do
-        Simply return master weight gradients (no scale updates)
+        Compute gradients for fixed scale (standard BitLinear)
         """
         master_grads = {}
         
@@ -146,7 +132,7 @@ class BitLinearStandardManager:
             neg_mask = w < -delta
             zero_mask = torch.abs(w) <= delta
             
-            # Gradient for master weights (same as TTQ)
+            # Gradient for master weights
             grad_w = torch.zeros_like(grad_wt)
             grad_w[pos_mask] = grad_wt[pos_mask] * scale
             grad_w[zero_mask] = grad_wt[zero_mask] * 1.0
@@ -171,7 +157,7 @@ class BitLinearStandardManager:
     def get_scaling_parameters(self):
         """
         Get scale parameters for optimizer
-        Returns empty list since scales are FIXED (not learned)
+        Returns empty list since scales are fixed
         """
         return []
     
@@ -186,7 +172,7 @@ class BitLinearStandardManager:
             'scale_type': 'fixed'
         }, save_path)
         
-        print(f"✓ Exported standard BitLinear model to {save_path}")
+        print(f"Exported standard BitLinear model to {save_path}")
     
     def print_statistics(self):
         """Print fixed scales"""

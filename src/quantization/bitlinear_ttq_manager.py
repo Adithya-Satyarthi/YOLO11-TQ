@@ -1,11 +1,3 @@
-# src/quantization/bitlinear_ttq_manager.py
-
-"""
-BitLinear TTQ Manager - Handles master-shadow synchronization
-Master model: Standard Conv2d with FP32 weights
-Shadow model: BitLinear_TTQ with ternary weights
-"""
-
 import torch
 import torch.nn as nn
 import numpy as np
@@ -34,11 +26,11 @@ class BitLinearTTQManager:
         # Initialize
         self._initialize_scaling_factors()
         
-        print(f"✓ BitLinear TTQ Manager initialized")
-        print(f"  Quantized layers: {len(self.quantized_layers)}")
+        print(f"BitLinear TTQ Manager initialized")
+        print(f"Quantized layers: {len(self.quantized_layers)}")
     
     def _get_master_conv_modules(self):
-        """Get Conv2d modules from master model (layer.conv) - INCLUDING PE"""
+        """Get Conv2d modules from master model (layer.conv)"""
         modules = {}
         for name, module in self.master_model.named_modules():
             if isinstance(module, nn.Conv2d):
@@ -49,7 +41,7 @@ class BitLinearTTQManager:
         return modules
 
     def _get_shadow_bitlinear_modules(self):
-        """Get BitLinear_TTQ modules from shadow model - INCLUDING PE"""
+        """Get BitLinear_TTQ modules from shadow model"""
         from src.quantization.c2psa_bitlinear_ttq import BitLinear_TTQ
         
         modules = {}
@@ -94,13 +86,11 @@ class BitLinearTTQManager:
             
             self.quantized_layers.append(name)
             
-            print(f"  ✓ Init {name}: Ap={ap_init:.4f}, An={an_init:.4f}")
+            print(f"Init {name}: Ap={ap_init:.4f}, An={an_init:.4f}")
     
     def quantize_master_to_shadow(self):
         """
-        Quantize master model FP32 weights → shadow model ternary weights.
-        
-        Process:
+        Quantize master model FP32 weights to shadow model ternary weights.
         1. Get FP32 weights from master
         2. Quantize to ternary using current Ap/An
         3. Copy to shadow model BitLinear_TTQ weights
@@ -249,7 +239,7 @@ class BitLinearTTQManager:
             'threshold': self.threshold
         }, save_path)
         
-        print(f"✓ Exported quantized C2PSA model to {save_path}")
+        print(f"Exported quantized C2PSA model to {save_path}")
     
     def print_statistics(self):
         """Print Ap/An statistics"""

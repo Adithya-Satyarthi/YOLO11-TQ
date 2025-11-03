@@ -1,10 +1,3 @@
-# src/quantization/c2psa_bitlinear_ttq.py
-
-"""
-BitLinear_TTQ layer for YOLO11 C2PSA architecture
-Adapts to the actual C2PSA structure with Conv2d-based attention
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,7 +25,7 @@ class BitLinear_TTQ(nn.Module):
         self.groups = groups
         self.activation_bits = activation_bits
         
-        # Weight (FP32) - matching Conv2d shape
+        # Weight (FP32)
         self.weight = nn.Parameter(
             torch.randn(out_channels, in_channels // groups, kernel_size, kernel_size)
         )
@@ -50,7 +43,7 @@ class BitLinear_TTQ(nn.Module):
         self.epsilon = 1e-6
     
     def _compute_ttq_threshold(self, w):
-        """TTQ threshold: δ = 0.7 × E[|w|]"""
+        """TTQ threshold: delta = 0.7 * E[|w|]"""
         mean_abs_w = torch.mean(torch.abs(w))
         delta = 0.7 * mean_abs_w
         return delta
@@ -69,10 +62,7 @@ class BitLinear_TTQ(nn.Module):
         return w_q
     
     def _quantize_activations_bitnet(self, x):
-        """
-        BitNet absmax quantization (Eq. 4-5)
-        x_quant = Clip(x * Q_b / gamma, -Q_b + eps, Q_b - eps)
-        """
+
         gamma = torch.max(torch.abs(x))
         gamma = torch.clamp(gamma, min=self.epsilon)
         
@@ -88,7 +78,7 @@ class BitLinear_TTQ(nn.Module):
     
     def forward(self, x):
         """
-        Forward pass: LayerNorm → Absmax Quant → Conv2d (ternary) → Dequant
+        Forward pass: LayerNorm, Absmax Quant, Conv2d (ternary), Dequant
         """
         # LayerNorm
         x_ln = self.ln(x)
@@ -121,14 +111,6 @@ class BitLinear_TTQ(nn.Module):
 def replace_c2psa_with_bitlinear(c2psa_module):
     """
     Replace Conv layers in C2PSA with BitLinear_TTQ.
-    
-    Target layers (QUANTIZED):
-    - c2psa.m[0].attn.qkv.conv  (Conv2d for Q, K, V projection)
-    - c2psa.m[0].attn.proj.conv (Conv2d for output projection)
-    - c2psa.m[0].attn.pe.conv   (Conv2d for positional encoding)
-    
-    Keep original (FP32):
-    - c2psa.m[0].ffn (feedforward - keep FP32)
     """
     # Access PSABlock (first element in Sequential)
     psa_block = c2psa_module.m[0]
@@ -174,7 +156,7 @@ def replace_c2psa_with_bitlinear(c2psa_module):
         kernel_size=1
     )
     
-    print("✓ Replaced C2PSA attention Conv layers with BitLinear_TTQ")
+    print("   Replaced C2PSA attention Conv layers with BitLinear_TTQ")
     print("  - qkv.conv: Quantized (128→256)")
     print("  - proj.conv: Quantized (128→128)")
     print("  - pe.conv: Quantized (128→128, 3*3 depthwise)")

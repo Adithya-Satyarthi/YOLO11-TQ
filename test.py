@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Verify Quantized YOLO Model Weights
-Check if saved model has properly quantized ternary weights (-Wn, 0, +Wp)
-"""
 
 import torch
 import numpy as np
@@ -192,10 +188,10 @@ def verify_quantized_model(model_path, verbose=True):
 
             if stats['is_ternary'] and stats['positive_unique_count'] == 1 and stats['negative_unique_count'] == 1:
                 ternary_count += 1
-                status = "✓ TERNARY"
+                status = " TERNARY"
             else:
                 fp_count += 1
-                status = "✗ FP32   "
+                status = " FP32   "
 
             if verbose:
                 # Shorten layer name for display
@@ -230,12 +226,12 @@ def verify_quantized_model(model_path, verbose=True):
         print(f"Quantization rate: {100 * ternary_count / len(conv_stats):.1f}%")
 
     if ternary_count == 0:
-        print("\n⚠️  WARNING: No ternary quantized layers found!")
+        print("\n  WARNING: No ternary quantized layers found!")
         print("   The model appears to be in FP32 format.")
     elif fp_count == 0:
-        print("\n✓ SUCCESS: All layers are ternary quantized!")
+        print("\n   SUCCESS: All layers are ternary quantized!")
     else:
-        print(f"\n✓ Partial quantization: {ternary_count}/{len(conv_stats)} layers quantized")
+        print(f"\n   Partial quantization: {ternary_count}/{len(conv_stats)} layers quantized")
 
     # Detailed ternary layer report
     if ternary_count > 0:
@@ -291,9 +287,9 @@ def compare_models(original_path, quantized_path):
     print(f"Quantization increase: +{quant_results['ternary_layers'] - orig_results['ternary_layers']} layers")
 
     if quant_results['ternary_layers'] > orig_results['ternary_layers']:
-        print("\n✓ Quantization successful!")
+        print("\n   Quantization successful!")
     else:
-        print("\n⚠️  WARNING: No new layers were quantized!")
+        print("\n  WARNING: No new layers were quantized!")
 
 
 def main():

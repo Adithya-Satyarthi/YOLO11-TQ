@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Validate and Compare YOLO Model Accuracy
-Compare mAP metrics between FP32 and quantized models
-"""
-
 import torch
 import argparse
 from pathlib import Path
@@ -24,28 +19,15 @@ def load_model_safely(model_path):
     try:
         print(f"Loading model from: {model_path}")
         model = YOLO(model_path)
-        print(f"✓ Model loaded successfully")
+        print(f"  Model loaded successfully")
         return model
     except Exception as e:
-        print(f"❌ Error loading {model_path}: {e}")
+        print(f" Error loading {model_path}: {e}")
         raise
 
 
 def validate_model(model, data_yaml, imgsz=640, batch=16, device=0, verbose=True):
-    """
-    Validate model and return metrics.
     
-    Args:
-        model: YOLO model object
-        data_yaml: Path to dataset YAML file
-        imgsz: Image size for validation
-        batch: Batch size
-        device: Device to use (0 for GPU, 'cpu' for CPU)
-        verbose: Print detailed results
-    
-    Returns:
-        dict: Validation metrics
-    """
     print(f"\nRunning validation on {data_yaml}...")
     print(f"  Image size: {imgsz}, Batch size: {batch}, Device: {device}")
     
@@ -56,7 +38,7 @@ def validate_model(model, data_yaml, imgsz=640, batch=16, device=0, verbose=True
             batch=batch,
             device=device,
             verbose=verbose,
-            plots=False  # Disable plot generation for speed
+            plots=False  
         )
         
         # Extract metrics
@@ -75,7 +57,7 @@ def validate_model(model, data_yaml, imgsz=640, batch=16, device=0, verbose=True
         return metrics
     
     except Exception as e:
-        print(f"❌ Validation error: {e}")
+        print(f"   Validation error: {e}")
         return None
 
 
@@ -103,15 +85,8 @@ def print_metrics_table(fp32_metrics, quant_metrics, model_name="Model"):
             diff = quant_val - fp32_val
             degradation_pct = (diff / fp32_val * 100) if fp32_val > 0 else 0
             
-            # Color coding for terminal (optional)
-            if abs(degradation_pct) < 2:
-                status = "✓"  # Excellent
-            elif abs(degradation_pct) < 5:
-                status = "○"  # Good
-            else:
-                status = "⚠"  # Warning
             
-            print(f"{metric:<20} {fp32_val:>15.4f} {quant_val:>15.4f} {diff:>+15.4f} {degradation_pct:>+14.2f}% {status}")
+            print(f"{metric:<20} {fp32_val:>15.4f} {quant_val:>15.4f} {diff:>+15.4f} {degradation_pct:>+14.2f}%")
     
     print("=" * 90)
     
@@ -123,14 +98,6 @@ def print_metrics_table(fp32_metrics, quant_metrics, model_name="Model"):
     print(f"  Primary metric (mAP50-95): {fp32_metrics['mAP50-95']:.4f} → {quant_metrics['mAP50-95']:.4f}")
     print(f"  Accuracy degradation: {main_metric_pct:+.2f}%")
     
-    if abs(main_metric_pct) < 1:
-        print(f"  Status: ✓ EXCELLENT - Less than 1% degradation")
-    elif abs(main_metric_pct) < 3:
-        print(f"  Status: ✓ GOOD - Less than 3% degradation")
-    elif abs(main_metric_pct) < 5:
-        print(f"  Status: ○ ACCEPTABLE - Less than 5% degradation")
-    else:
-        print(f"  Status: ⚠ WARNING - More than 5% degradation")
     
     print("=" * 90)
 
@@ -138,14 +105,6 @@ def print_metrics_table(fp32_metrics, quant_metrics, model_name="Model"):
 def compare_models(fp32_path, quant_path, data_yaml, imgsz=640, batch=16, device=0):
     """
     Compare FP32 and quantized models.
-    
-    Args:
-        fp32_path: Path to FP32 model
-        quant_path: Path to quantized model
-        data_yaml: Dataset YAML file
-        imgsz: Image size
-        batch: Batch size
-        device: Device to use
     """
     print("\n" + "=" * 90)
     print("MODEL ACCURACY VALIDATION AND COMPARISON")
@@ -158,10 +117,10 @@ def compare_models(fp32_path, quant_path, data_yaml, imgsz=640, batch=16, device
     fp32_metrics = validate_model(fp32_model, data_yaml, imgsz, batch, device, verbose=False)
     
     if fp32_metrics is None:
-        print("❌ Failed to validate FP32 model")
+        print("   Failed to validate FP32 model")
         return
     
-    print(f"\n✓ FP32 Validation Complete")
+    print(f"\n  FP32 Validation Complete")
     print(f"  mAP50-95: {fp32_metrics['mAP50-95']:.4f}")
     print(f"  mAP50:    {fp32_metrics['mAP50']:.4f}")
     
@@ -172,10 +131,10 @@ def compare_models(fp32_path, quant_path, data_yaml, imgsz=640, batch=16, device
     quant_metrics = validate_model(quant_model, data_yaml, imgsz, batch, device, verbose=False)
     
     if quant_metrics is None:
-        print("❌ Failed to validate quantized model")
+        print("   Failed to validate quantized model")
         return
     
-    print(f"\n✓ Quantized Validation Complete")
+    print(f"\n  Quantized Validation Complete")
     print(f"  mAP50-95: {quant_metrics['mAP50-95']:.4f}")
     print(f"  mAP50:    {quant_metrics['mAP50']:.4f}")
     
@@ -201,7 +160,7 @@ def compare_models(fp32_path, quant_path, data_yaml, imgsz=640, batch=16, device
     with open(results_file, 'w') as f:
         yaml.dump(results_dict, f, default_flow_style=False)
     
-    print(f"\n📄 Results saved to: {results_file}")
+    print(f"\n Results saved to: {results_file}")
     
     return fp32_metrics, quant_metrics
 
@@ -225,7 +184,7 @@ def validate_single_model(model_path, data_yaml, imgsz=640, batch=16, device=0):
     metrics = validate_model(model, data_yaml, imgsz, batch, device, verbose=True)
     
     if metrics is None:
-        print("❌ Validation failed")
+        print("   Validation failed")
         return
     
     print("\n" + "=" * 90)
@@ -253,7 +212,7 @@ def validate_single_model(model_path, data_yaml, imgsz=640, batch=16, device=0):
     with open(results_file, 'w') as f:
         yaml.dump(results_dict, f, default_flow_style=False)
     
-    print(f"\n📄 Results saved to: {results_file}")
+    print(f"\n Results saved to: {results_file}")
 
 
 def main():
@@ -296,13 +255,13 @@ Examples:
     
     # Check if model exists
     if not Path(args.model_path).exists():
-        print(f"❌ Error: Model file not found: {args.model_path}")
+        print(f"   Error: Model file not found: {args.model_path}")
         return
     
     # Compare mode
     if args.fp32:
         if not Path(args.fp32).exists():
-            print(f"❌ Error: FP32 model file not found: {args.fp32}")
+            print(f"   Error: FP32 model file not found: {args.fp32}")
             return
         
         compare_models(

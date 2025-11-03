@@ -1,16 +1,3 @@
-# src/quantization/c2psa_bitlinear_standard.py
-
-"""
-Standard BitLinear from "1-bit LLMs: 1.58 Bits is All You Need"
-Same training as our TTQ implementation but with FIXED scales (not learned)
-
-Key difference:
-- Scales are E[|w|] and -E[|w|] (FIXED, not parameters)
-- Master-Shadow training loop (same as TTQ)
-- Forward on shadow (quantized), update on master (FP32)
-- No learning of Ap/An parameters
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,10 +5,8 @@ import torch.nn.functional as F
 
 class BitLinearStandard(nn.Module):
     """
-    Standard BitLinear with FIXED scales (from paper)
-    
     Ternary weights: {-E[|w|], 0, +E[|w|]}
-    Scales are fixed after initialization - NOT learned
+    Scales are fixed after initialization
     """
     
     def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, 
@@ -35,13 +20,13 @@ class BitLinearStandard(nn.Module):
         self.groups = groups
         self.activation_bits = activation_bits
         
-        # Weight (FP32) - same as TTQ
+        # Weight (FP32)
         self.weight = nn.Parameter(
             torch.randn(out_channels, in_channels // groups, kernel_size, kernel_size)
         )
         self.bias = nn.Parameter(torch.zeros(out_channels))
         
-        # FIXED scales (NOT learned) - register as buffers
+        # fixed scales
         self.register_buffer('scale', torch.tensor(0.01))  # Single symmetric scale
         
         # LayerNorm
@@ -52,26 +37,19 @@ class BitLinearStandard(nn.Module):
         self.epsilon = 1e-6
     
     def _compute_ttq_threshold(self, w):
-        """TTQ threshold: δ = 0.7 × E[|w|]"""
+        """TTQ threshold: delta = 0.7 * E[|w|]"""
         mean_abs_w = torch.mean(torch.abs(w))
         delta = 0.7 * mean_abs_w
         return delta
     
     def _quantize_weights_ternary_fixed(self, w):
-        """
-        Quantize to {-scale, 0, +scale} with FIXED scale
-        
-        Paper formula:
-        - w_ternary ∈ {-α, 0, +α}
-        - α = E[|w|] (mean absolute value, fixed)
-        """
+
         delta = self._compute_ttq_threshold(w)
         
         w_q = torch.zeros_like(w)
         pos_mask = w > delta
         neg_mask = w < -delta
         
-        # Use FIXED scale (not learned)
         w_q[pos_mask] = self.scale
         w_q[neg_mask] = -self.scale
         
@@ -94,8 +72,7 @@ class BitLinearStandard(nn.Module):
     
     def forward(self, x):
         """
-        Forward pass: LayerNorm → Absmax Quant → Conv (ternary) → Dequant
-        (Same as BitLinear_TTQ, but with fixed scales)
+        Forward pass: LayerNorm, Absmax Quant,  Conv (ternary), Dequant
         """
         # LayerNorm
         x_ln = self.ln(x)
@@ -103,7 +80,7 @@ class BitLinearStandard(nn.Module):
         # Absmax quantization
         x_quant, gamma = self._quantize_activations_bitnet(x_ln)
         
-        # Quantize weights with FIXED scale
+        # Quantize weights
         w_q = self._quantize_weights_ternary_fixed(self.weight)
         
         # Conv2d operation
@@ -127,7 +104,7 @@ class BitLinearStandard(nn.Module):
 
 def replace_c2psa_with_bitlinear_standard(c2psa_module):
     """
-    Replace C2PSA Conv layers with standard BitLinear (FIXED scales)
+    Replace C2PSA Conv layers with standard BitLinear
     """
     psa_block = c2psa_module.m[0]
     
@@ -172,7 +149,7 @@ def replace_c2psa_with_bitlinear_standard(c2psa_module):
         kernel_size=1
     )
     
-    print("✓ Replaced C2PSA with Standard BitLinear (FIXED Scales)")
+    print("  Replaced C2PSA with Standard BitLinear (FIXED Scales)")
     print("  - qkv.conv: Fixed scale quantization")
     print("  - proj.conv: Fixed scale quantization")
     print("  - pe.conv: Fixed scale quantization")

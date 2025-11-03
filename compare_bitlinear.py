@@ -1,27 +1,10 @@
 #!/usr/bin/env python3
-"""
-Compare BitLinear_TTQ (Our Implementation) vs Standard BitLinear (Paper)
-
-Takes two quantized model paths:
-1. Our implementation (BitLinear_TTQ with learned scales)
-2. Standard BitLinear (fixed scales from paper)
-
-Compares on:
-- Model size
-- Compression ratio
-- Inference speed
-- Accuracy on COCO128
-- Quantization statistics
-"""
-
 import torch
 import sys
 import os
 import warnings
 from pathlib import Path
 
-#os.environ['OMP_NUM_THREADS'] = '1'
-#torch.set_num_threads(1)
 warnings.filterwarnings('ignore')
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -61,7 +44,7 @@ def validate_model(model_yolo, data_yaml='coco.yaml', batch=8):
             'recall': float(results.box.r[-1]) if hasattr(results.box, 'r') and len(results.box.r) > 0 else 0.0,
         }
     except Exception as e:
-        print(f"  ⚠️  Validation error: {e}")
+        print(f" Validation error: {e}")
         return None
 
 
@@ -91,7 +74,7 @@ def get_quantization_info(checkpoint_path):
             'scale_type': checkpoint.get('scale_type', 'unknown') if isinstance(checkpoint, dict) else 'unknown'
         }
     except Exception as e:
-        print(f"  ⚠️  Error reading quantization info: {e}")
+        print(f"Error reading quantization info: {e}")
         return None
 
 
@@ -115,9 +98,6 @@ def main():
     print(f"Standard BitLinear: {standard_path}")
     print(f"Baseline Model: {baseline_model}")
     
-    # ========================================================================
-    # LOAD MODELS
-    # ========================================================================
     
     print("\n[LOADING MODELS]")
     print("-" * 90)
@@ -128,29 +108,29 @@ def main():
         print("Loading baseline model...")
         baseline_yolo = YOLO(baseline_model)
         baseline_yolo.model = baseline_yolo.model.to(device)
-        print("✓ Baseline loaded")
+        print("Baseline loaded")
         
         print("Loading Our Implementation (BitLinear_TTQ)...")
         ours_checkpoint = torch.load(ours_path, map_location=device, weights_only=False)
         ours_model = ours_checkpoint['model'] if isinstance(ours_checkpoint, dict) and 'model' in ours_checkpoint else ours_checkpoint
         ours_yolo = YOLO(baseline_model)
         ours_yolo.model = ours_model
-        print("✓ Our implementation loaded")
+        print("Our implementation loaded")
         
         print("Loading Standard BitLinear...")
         std_checkpoint = torch.load(standard_path, map_location=device, weights_only=False)
         std_model = std_checkpoint['model'] if isinstance(std_checkpoint, dict) and 'model' in std_checkpoint else std_checkpoint
         std_yolo = YOLO(baseline_model)
         std_yolo.model = std_model
-        print("✓ Standard BitLinear loaded")
+        print("Standard BitLinear loaded")
         
     except Exception as e:
-        print(f"❌ Error loading models: {e}")
+        print(f"Error loading models: {e}")
         sys.exit(1)
     
-    # ========================================================================
+
     # MODEL STATISTICS
-    # ========================================================================
+
     
     print("\n[MODEL STATISTICS]")
     print("-" * 90)
@@ -164,9 +144,9 @@ def main():
     print(f"  Our Implementation: {ours_size:.2f} MB ({ours_size/baseline_size*100:.1f}% of baseline)")
     print(f"  Standard BitLinear: {std_size:.2f} MB ({std_size/baseline_size*100:.1f}% of baseline)")
     
-    # ========================================================================
+
     # VALIDATE MODELS
-    # ========================================================================
+
     
     print("\n[VALIDATION ON COCO]")
     print("-" * 90)
@@ -174,7 +154,7 @@ def main():
     print("\nValidating Baseline Model...")
     baseline_metrics = validate_model(baseline_yolo)
     if baseline_metrics:
-        print(f"✓ Baseline:")
+        print(f"Baseline:")
         print(f"  mAP50: {baseline_metrics['mAP50']:.4f}")
         print(f"  mAP50-95: {baseline_metrics['mAP50-95']:.4f}")
         print(f"  Precision: {baseline_metrics['precision']:.4f}")
@@ -183,7 +163,7 @@ def main():
     print("\nValidating Our Implementation (BitLinear_TTQ)...")
     ours_metrics = validate_model(ours_yolo)
     if ours_metrics:
-        print(f"✓ Our Implementation:")
+        print(f"Our Implementation:")
         print(f"  mAP50: {ours_metrics['mAP50']:.4f}")
         print(f"  mAP50-95: {ours_metrics['mAP50-95']:.4f}")
         print(f"  Precision: {ours_metrics['precision']:.4f}")
@@ -192,15 +172,15 @@ def main():
     print("\nValidating Standard BitLinear...")
     std_metrics = validate_model(std_yolo)
     if std_metrics:
-        print(f"✓ Standard BitLinear:")
+        print(f"Standard BitLinear:")
         print(f"  mAP50: {std_metrics['mAP50']:.4f}")
         print(f"  mAP50-95: {std_metrics['mAP50-95']:.4f}")
         print(f"  Precision: {std_metrics['precision']:.4f}")
         print(f"  Recall: {std_metrics['recall']:.4f}")
     
-    # ========================================================================
+
     # COMPARISON TABLE
-    # ========================================================================
+
     
     if baseline_metrics and ours_metrics and std_metrics:
         print("\n" + "="*90)
@@ -239,12 +219,12 @@ def main():
         
         if ours_drop < std_drop:
             improvement = std_drop - ours_drop
-            print(f"\n✅ Our Implementation is BETTER by {improvement:.2f}% (less accuracy drop)")
+            print(f"\n Our Implementation is BETTER by {improvement:.2f}% (less accuracy drop)")
         elif ours_drop > std_drop:
             degradation = ours_drop - std_drop
-            print(f"\n⚠️  Standard BitLinear is BETTER by {degradation:.2f}% (less accuracy drop)")
+            print(f"\n  Standard BitLinear is BETTER by {degradation:.2f}% (less accuracy drop)")
         else:
-            print(f"\n➖ Both implementations show similar accuracy drop")
+            print(f"\n Both implementations show similar accuracy drop")
         
         # Summary
         print("\n" + "="*90)
@@ -255,18 +235,18 @@ def main():
         print(f"  Checkpoint size reduction: {(1 - ours_size/baseline_size)*100:.1f}%")
         
         print(f"\nOur Implementation (BitLinear_TTQ) Advantages:")
-        print(f"  ✓ Learned scales (Ap, An) - adapts to specific layers")
-        print(f"  ✓ TTQ with threshold - selective quantization")
-        print(f"  ✓ Lower accuracy drop ({ours_drop:.2f}% vs {std_drop:.2f}%)")
+        print(f"  Learned scales (Ap, An) - adapts to specific layers")
+        print(f"  TTQ with threshold - selective quantization")
+        print(f"  Lower accuracy drop ({ours_drop:.2f}% vs {std_drop:.2f}%)")
         
         print(f"\nStandard BitLinear Advantages:")
-        print(f"  ✓ Fixed scales - simpler, no training overhead")
-        print(f"  ✓ Paper-proven approach")
+        print(f"  Fixed scales - simpler, no training overhead")
+        print(f"  Paper-proven approach")
         if std_drop < ours_drop:
-            print(f"  ✓ Better accuracy retention")
+            print(f"  Better accuracy retention")
         
     print("\n" + "="*90)
-    print("✅ COMPARISON COMPLETE")
+    print(" COMPARISON COMPLETE")
     print("="*90 + "\n")
 
 

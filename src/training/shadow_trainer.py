@@ -1,10 +1,3 @@
-# src/training/shadow_trainer.py
-
-"""
-TTQ Training with Shadow Weights
-Custom training loop - NO Ultralytics training, only dataloading
-"""
-
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -19,19 +12,18 @@ from ultralytics.utils.loss import v8DetectionLoss
 
 from src.quantization.shadow_weight_manager import ShadowWeightManager
 
-# Wandb import (optional)
+# Wandb import
 try:
     import wandb
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
-    print("⚠️  Wandb not installed. Install with: pip install wandb")
+    print("  Wandb not installed. Install with: pip install wandb")
 
 
 class ShadowTTQTrainer:
     """
     Custom TTQ trainer using shadow weight approach.
-    Ultralytics used ONLY for dataloading.
     """
     
     def __init__(self, master_model, shadow_model, config, device='cuda'):
@@ -61,13 +53,13 @@ class ShadowTTQTrainer:
             threshold=config['quantization']['threshold'],
             device=self.device,
             target_layers=config['quantization'].get('target_layers', None),
-            quantize_1x1=config['quantization'].get('quantize_1x1_conv', False)  # NEW
+            quantize_1x1=config['quantization'].get('quantize_1x1_conv', False)  
         )
         
         # Setup loss function
         self.compute_loss = v8DetectionLoss(self.shadow_model.model)
         
-        # Set hyperparameters with VALUES
+        # Set hyperparameters with values
         if hasattr(self.compute_loss, 'hyp') and isinstance(self.compute_loss.hyp, dict):
             from types import SimpleNamespace
             hyp_dict = self.compute_loss.hyp
@@ -218,35 +210,29 @@ class ShadowTTQTrainer:
             # Zero gradients
             self.optimizer.zero_grad()
             
-            # STEP 1: Quantize master → shadow
+            
             self.shadow_manager.quantize_master_to_shadow()
             
-            # STEP 2: Forward pass on SHADOW model
+            
             pred = self.shadow_model.model(batch['img'])
             loss, loss_items = self.compute_loss(pred, batch)
             if loss.dim() > 0:
                 loss = loss.sum()
             
-            # STEP 3: Backward on shadow model
             loss.backward()
             
-            # STEP 4: Manually compute TTQ gradients
             master_grads, wp_grads, wn_grads = self.shadow_manager.compute_ttq_gradients(
                 shadow_grads=None
             )
             
-            # STEP 5: Apply gradients to master and Wp/Wn
             self.shadow_manager.apply_gradients_to_master(master_grads)
             self.shadow_manager.apply_gradients_to_scales(wp_grads, wn_grads)
             
-            # STEP 6: Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.master_model.model.parameters(), max_norm=10.0)
             torch.nn.utils.clip_grad_norm_(self.shadow_manager.get_scaling_parameters(), max_norm=10.0)
             
-            # STEP 7: Optimizer step
             self.optimizer.step()
             
-            # Update metrics
             mloss = (mloss * i + loss_items) / (i + 1)
             pbar.set_postfix({
                 'loss': f'{mloss[0]:.4f}',
@@ -323,7 +309,7 @@ class ShadowTTQTrainer:
         else:
             self.patience_counter += 1
             if self.patience_counter >= self.patience:
-                print(f"\n🛑 Early stopping triggered! No improvement for {self.patience} epochs.")
+                print(f"\n Early stopping triggered! No improvement for {self.patience} epochs.")
                 return True
             else:
                 print(f"  No improvement. Patience: {self.patience_counter}/{self.patience}")
@@ -352,7 +338,7 @@ class ShadowTTQTrainer:
         ))
         save_dir.mkdir(parents=True, exist_ok=True)
         
-        print(f"💾 Checkpoint directory: {save_dir.absolute()}")
+        print(f" Checkpoint directory: {save_dir.absolute()}")
         
         # Get save_interval if specified in config
         save_interval = self.config['train'].get('save_interval', None)
@@ -388,12 +374,12 @@ class ShadowTTQTrainer:
             
             should_stop = self._check_early_stopping(metrics['mAP50'])
             
-            # Save best model (ONLY when there's improvement)
+            # Save best model
             if metrics['mAP50'] > self.best_fitness:
-                self.best_fitness = metrics['mAP50']  # ← Update HERE, not in early stopping
+                self.best_fitness = metrics['mAP50']  
                 best_path = save_dir / 'best.pt'
                 self.shadow_manager.export_ternary_model(best_path)
-                print(f"  ✓ New best model! mAP50: {self.best_fitness:.4f}")
+                print(f"New best model! mAP50: {self.best_fitness:.4f}")
                 
                 # Save timestamped backup of best model
                 from datetime import datetime
@@ -401,19 +387,19 @@ class ShadowTTQTrainer:
                 backup_path = save_dir / f'best_epoch{epoch+1}_{timestamp}.pt'
                 self.shadow_manager.export_ternary_model(backup_path)
             
-            # Optional: Save periodic checkpoints if save_interval is set
+            
             if save_interval and (epoch + 1) % save_interval == 0:
                 checkpoint_path = save_dir / f'checkpoint_epoch{epoch+1}.pt'
                 self.shadow_manager.export_ternary_model(checkpoint_path)
-                print(f"  💾 Checkpoint saved: {checkpoint_path.name}")
+                print(f"   Checkpoint saved: {checkpoint_path.name}")
             
             # Stop if early stopping triggered
             if should_stop:
                 break
         
         print("\n" + "="*70)
-        print(f"✅ Training complete! Best mAP50: {self.best_fitness:.4f}")
-        print(f"📁 Checkpoints saved to: {save_dir.absolute()}")
+        print(f" Training complete! Best mAP50: {self.best_fitness:.4f}")
+        print(f" Checkpoints saved to: {save_dir.absolute()}")
         print("="*70)
         
         if self.use_wandb:

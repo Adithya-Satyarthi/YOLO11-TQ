@@ -1,10 +1,3 @@
-# src/quantization/shadow_weight_manager.py
-
-"""
-Shadow Weight Manager for TTQ-YOLO
-Manages master (FP32) and shadow (ternary) models with external Wp/Wn scaling factors
-"""
-
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -21,23 +14,15 @@ class ShadowWeightManager:
     
     def __init__(self, master_model, shadow_model, threshold=0.7, device='cuda', 
                  target_layers=None, quantize_1x1=False):
-        """
-        Args:
-            master_model: YOLO model with FP32 weights
-            shadow_model: YOLO model for quantized weights (same architecture)
-            threshold: Multiplier for mean-based quantization (0.7 from TWN paper)
-            device: Device to use
-            target_layers: List of layer indices to quantize (for progressive quantization)
-            quantize_1x1: Whether to quantize 1x1 convolutions (default: False)
-        """
+
         self.master_model = master_model
         self.shadow_model = shadow_model
         self.threshold = threshold
         self.device = device
         self.target_layers = target_layers
-        self.quantize_1x1 = quantize_1x1  # NEW
+        self.quantize_1x1 = quantize_1x1
         
-        # External scaling factors (not part of model state_dict)
+        # External scaling factor
         self.wp_dict = {}  # {layer_name: Wp tensor}
         self.wn_dict = {}  # {layer_name: Wn tensor}
         
@@ -47,9 +32,9 @@ class ShadowWeightManager:
         # Initialize scaling factors
         self._initialize_scaling_factors()
         
-        print(f"✓ Shadow Weight Manager initialized")
-        print(f"  Quantized layers: {len(self.quantized_layers)}")
-        print(f"  1x1 convolution quantization: {'Enabled' if quantize_1x1 else 'Disabled'}")
+        print(f"Shadow Weight Manager initialized")
+        print(f"Quantized layers: {len(self.quantized_layers)}")
+        print(f"1x1 convolution quantization: {'Enabled' if quantize_1x1 else 'Disabled'}")
     
     def _should_quantize(self, name, module):
         """Determine if a layer should be quantized"""
@@ -60,11 +45,9 @@ class ShadowWeightManager:
         k = module.kernel_size
         is_1x1 = (isinstance(k, tuple) and k[0] == 1 and k[1] == 1) or k == 1
         
-        # Skip 1x1 if not enabled
         if is_1x1 and not self.quantize_1x1:
             return False
         
-        # Parse layer index
         parts = name.split('.')
         if len(parts) < 3 or parts[0] != 'model':
             return False
@@ -87,12 +70,6 @@ class ShadowWeightManager:
     def _initialize_scaling_factors(self):
         """
         Initialize Wp/Wn from pretrained weights.
-        
-        CRITICAL: Use E[|w|] formula from TTQ paper:
-        - Wp = E[|w|] for w > δ (mean of ABSOLUTE values in positive group)
-        - Wn = E[|w|] for w < -δ (mean of ABSOLUTE values in negative group)
-        
-        This matches the old implementation and gives proper initialization values (~0.04-0.07).
         """
         for name, master_module in self.master_model.named_modules():
             if self._should_quantize(name, master_module):
@@ -100,20 +77,17 @@ class ShadowWeightManager:
                 w = master_module.weight.data
                 w_abs = torch.abs(w)
                 
-                # Compute threshold: δ = 0.7 * E[|w|]
                 delta = self.threshold * torch.mean(w_abs)
                 
-                # Positive weights: Wp = E[|w|] for w > δ
                 pos_mask = w > delta
                 if pos_mask.any():
-                    wp_init = torch.mean(w_abs[pos_mask])  # Mean of ABSOLUTE values
+                    wp_init = torch.mean(w_abs[pos_mask])  # Mean of absolute weight
                 else:
                     wp_init = torch.tensor(0.01)  # Fallback
                 
-                # Negative weights: Wn = E[|w|] for w < -δ
                 neg_mask = w < -delta
                 if neg_mask.any():
-                    wn_init = torch.mean(w_abs[neg_mask])  # Mean of ABSOLUTE values
+                    wn_init = torch.mean(w_abs[neg_mask])  # Mean of absolute weight
                 else:
                     wn_init = torch.tensor(0.01)  # Fallback
                 
@@ -123,18 +97,17 @@ class ShadowWeightManager:
                 
                 self.quantized_layers.append(name)
                 
-                # Parse layer info for display
+                
                 parts = name.split('.')
                 layer_idx = parts[1] if len(parts) > 1 else '?'
                 k = master_module.kernel_size
                 k_str = f"{k[0]}x{k[1]}" if isinstance(k, tuple) else f"{k}x{k}"
                 
-                print(f"  ✓ Init [{layer_idx:2s}] {k_str} {name}: Wp={wp_init:.4f}, Wn={wn_init:.4f}")
+                print(f"Init [{layer_idx:2s}] {k_str} {name}: Wp={wp_init:.4f}, Wn={wn_init:.4f}")
     
     def quantize_master_to_shadow(self):
         """
         Quantize master model weights into shadow model using current Wp/Wn.
-        Formula: w_t = {+Wp if w > δ, 0 if |w| ≤ δ, -Wn if w < -δ}
         """
         with torch.no_grad():
             for name in self.quantized_layers:
@@ -197,7 +170,6 @@ class ShadowWeightManager:
             n_pos = pos_mask.sum().float().clamp(min=1.0)
             n_neg = neg_mask.sum().float().clamp(min=1.0)
             
-            # Equation 8: Scaled gradients for master weights
             grad_w = torch.zeros_like(grad_wt)
             grad_w[pos_mask] = grad_wt[pos_mask] * wp
             grad_w[zero_mask] = grad_wt[zero_mask] * 1.0
@@ -205,16 +177,12 @@ class ShadowWeightManager:
             
             master_grads[name] = grad_w
             
-            # Equation 7: Compute gradients for Wp/Wn with STABILIZATION
             if pos_mask.any():
-                # Mean gradient for positive weights
+                
                 grad_wp_raw = torch.mean(grad_wt[pos_mask])
                 
-                # CRITICAL: Normalize by current Wp value to prevent explosion
-                # This makes the update relative to current scale
                 grad_wp_normalized = grad_wp_raw / (wp.abs() + 1e-6)
                 
-                # Clip individual gradient to prevent single-step explosion
                 grad_wp_clipped = torch.clamp(grad_wp_normalized, -1.0, 1.0)
                 
                 wp_grads[name] = grad_wp_clipped
@@ -222,13 +190,11 @@ class ShadowWeightManager:
                 wp_grads[name] = torch.tensor(0.0).to(self.device)
             
             if neg_mask.any():
-                # Mean gradient for negative weights (note: -grad_wt because w_t = -Wn)
+                
                 grad_wn_raw = torch.mean(-grad_wt[neg_mask])
                 
-                # CRITICAL: Normalize by current Wn value
                 grad_wn_normalized = grad_wn_raw / (wn.abs() + 1e-6)
                 
-                # Clip individual gradient
                 grad_wn_clipped = torch.clamp(grad_wn_normalized, -1.0, 1.0)
                 
                 wn_grads[name] = grad_wn_clipped
@@ -270,21 +236,20 @@ class ShadowWeightManager:
     def export_ternary_model(self, save_path):
         """
         Export shadow model as standard YOLO checkpoint (ternary weights only).
-        No Wp/Wn stored - just pure ternary values in standard Conv2d.
         """
         # Final quantization
         self.quantize_master_to_shadow()
         
-        # Save shadow model (standard YOLO format)
+        # Save shadow model
         torch.save({
             'model': self.shadow_model,
             'quantized_layers': self.quantized_layers,
             'threshold': self.threshold
         }, save_path)
         
-        print(f"✓ Exported ternary model to {save_path}")
-        print(f"  This is a standard YOLO checkpoint with ternary weights")
-        print(f"  No custom layers required for inference!")
+        print(f"Exported ternary model to {save_path}")
+        print(f"This is a standard YOLO checkpoint with ternary weights")
+        print(f"No custom layers required for inference!")
     
     def print_statistics(self):
         """Print Wp/Wn statistics"""

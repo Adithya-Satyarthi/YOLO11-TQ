@@ -1,9 +1,3 @@
-# src/training/c2psa_trainer.py
-
-"""
-C2PSA BitLinear_TTQ Trainer
-"""
-
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -127,9 +121,8 @@ class C2PSABitLinearTTQTrainer:
         return optimizer
     
     def _build_dataloader(self, data_yaml, batch_size, mode='train'):
-        """Build dataloader using Ultralytics - NO WORKERS"""
+        """Build dataloader using Ultralytics"""
         
-        # CRITICAL: Force workers to 0 to prevent DRAM memory explosion
         workers = 0
         
         print(f"\n  Building {mode} dataloader...")
@@ -140,7 +133,7 @@ class C2PSABitLinearTTQTrainer:
             'data': data_yaml,
             'imgsz': self.config['train']['imgsz'],
             'batch': batch_size,
-            'workers': workers,  # CRITICAL: 0 workers
+            'workers': workers,  
         }
         
         cfg = get_cfg(overrides=overrides)
@@ -158,12 +151,12 @@ class C2PSABitLinearTTQTrainer:
         loader = build_dataloader(
             dataset,
             batch=batch_size,
-            workers=workers,  # CRITICAL: 0 workers
+            workers=workers,  
             shuffle=(mode == 'train'),
             rank=-1
         )
         
-        print(f"  ✓ Dataloader created: {len(loader)} batches")
+        print(f"   Dataloader created: {len(loader)} batches")
         
         return loader
 
@@ -187,7 +180,7 @@ class C2PSABitLinearTTQTrainer:
                 
                 self.optimizer.zero_grad()
                 
-                # Quantize master → shadow
+                # Quantize master to shadow
                 self.bitlinear_manager.quantize_master_to_shadow()
                 
                 # Forward on shadow
@@ -200,7 +193,7 @@ class C2PSABitLinearTTQTrainer:
                 # Backward
                 loss.backward()
                 
-                # Compute TTQ gradients - FIXED: no arguments
+                # Compute TTQ gradients
                 master_grads, ap_grads, an_grads = self.bitlinear_manager.compute_ttq_gradients()
                 
                 # Apply gradients
@@ -250,7 +243,7 @@ class C2PSABitLinearTTQTrainer:
                 
             except RuntimeError as e:
                 if 'out of memory' in str(e):
-                    print(f"\n❌ OOM at step {i}, reducing batch")
+                    print(f"\n OOM at step {i}, reducing batch")
                     torch.cuda.empty_cache()
                     continue
                 else:
@@ -301,7 +294,7 @@ class C2PSABitLinearTTQTrainer:
         else:
             self.patience_counter += 1
             if self.patience_counter >= self.patience:
-                print(f"\n🛑 Early stopping triggered!")
+                print(f"\n Early stopping triggered!")
                 return True
             return False
     
@@ -325,7 +318,7 @@ class C2PSABitLinearTTQTrainer:
         ))
         save_dir.mkdir(parents=True, exist_ok=True)
         
-        print(f"💾 Checkpoint directory: {save_dir.absolute()}")
+        print(f" Checkpoint directory: {save_dir.absolute()}")
         
         for epoch in range(epochs):
             self.epoch = epoch
@@ -356,13 +349,13 @@ class C2PSABitLinearTTQTrainer:
                 self.best_fitness = metrics['mAP50']
                 best_path = save_dir / 'best.pt'
                 self.bitlinear_manager.export_quantized_model(best_path)
-                print(f"  ✓ New best model! mAP50: {self.best_fitness:.4f}")
+                print(f"   New best model! mAP50: {self.best_fitness:.4f}")
             
             if self._check_early_stopping(metrics['mAP50']):
                 break
         
         print("\n" + "="*70)
-        print(f"✅ Training complete! Best mAP50: {self.best_fitness:.4f}")
+        print(f" Training complete! Best mAP50: {self.best_fitness:.4f}")
         print("="*70)
         
         if self.use_wandb:

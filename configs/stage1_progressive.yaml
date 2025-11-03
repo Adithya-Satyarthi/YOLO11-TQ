@@ -10,7 +10,7 @@ model_size: 'x'  # YOLO11 size (nano, small, medium, large, xlarge)
 base:
   checkpoint_dir: 'ttq_checkpoints'  # Base directory for all checkpoints
   wandb_project: 'ttq-yolo'          # Wandb project name
-  wandb_entity: ep22b049-indian-institute-of-technology-madras                 # Your wandb username/team (optional)
+  wandb_entity: ep22b049-indian-institute-of-technology-madras # Your wandb username/team
 
 # ============================================================================
 # STAGE DEFINITIONS

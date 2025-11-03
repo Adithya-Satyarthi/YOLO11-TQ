@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""
-Compression Analysis Tool (Accurate TTQ Calculation)
-Analyzes quantization coverage and calculates theoretical compression ratios
-for TTQ and BitLinear quantization methods
-
-TTQ Calculation:
-- Each weight: 2 bits (ternary: {-1, 0, +1})
-- Per layer scales: 2 × 32-bit floats (alpha_positive, alpha_negative)
-"""
 
 import argparse
 import torch
@@ -38,7 +29,7 @@ class CompressionAnalyzer:
         print("Loading baseline model...")
         self.baseline_yolo = YOLO(baseline_path)
         self.baseline_model = self.baseline_yolo.model
-        print("✓ Baseline loaded")
+        print("   Baseline loaded")
         
         # Load quantized
         print("Loading quantized model...")
@@ -47,7 +38,7 @@ class CompressionAnalyzer:
             self.quantized_model = quantized_ckpt['model']
         else:
             self.quantized_model = quantized_ckpt
-        print("✓ Quantized model loaded\n")
+        print("   Quantized model loaded\n")
     
     def analyze_layer_types(self) -> Dict:
         """Analyze which layers are quantized (Conv, Linear, etc)"""
@@ -111,7 +102,7 @@ class CompressionAnalyzer:
                 w = module.weight.data
                 unique_vals = torch.unique(w)
                 
-                # TTQ uses ~3 unique values per layer
+                # TTQ uses 3 unique values per layer
                 if len(unique_vals) <= 5:
                     ternary_count += 1
                     ternary_details[name] = {
@@ -121,7 +112,7 @@ class CompressionAnalyzer:
                         'params': w.numel()
                     }
                     if ternary_count <= 5:  # Show first 5
-                        print(f"  ✓ Ternary: {name}")
+                        print(f"     Ternary: {name}")
                         print(f"    Params: {w.numel():,}")
                         print(f"    Unique values: {len(unique_vals)}")
                         print(f"    Range: [{unique_vals.min():.4f}, {unique_vals.max():.4f}]\n")
@@ -129,7 +120,7 @@ class CompressionAnalyzer:
         if ternary_count > 5:
             print(f"  ... and {ternary_count - 5} more ternary layers\n")
         
-        # Check for BitLinear (checks for specific patterns)
+        # Check for BitLinear 
         bitlinear_count = 0
         for name, module in self.quantized_model.named_modules():
             if 'bitlinear' in name.lower() or 'bits' in name.lower():
@@ -160,7 +151,7 @@ class CompressionAnalyzer:
             'compression_details': {}
         }
         
-        # ========== BASELINE CALCULATION ==========
+        
         baseline_bits = 0
         baseline_params = 0
         
@@ -180,7 +171,7 @@ class CompressionAnalyzer:
         print(f"  Total bits: {baseline_bits / 1e9:.2f} Gb")
         print(f"  Estimated size: {results['baseline_size_mb']:.2f} MB\n")
         
-        # ========== QUANTIZED CALCULATION (TTQ-AWARE) ==========
+        
         quantized_bits = 0
         quantized_params = 0
         
@@ -194,9 +185,6 @@ class CompressionAnalyzer:
                 unique_vals = torch.unique(w)
                 
                 if len(unique_vals) <= 5:  # Ternary (TTQ)
-                    # TTQ Storage:
-                    # - 2 bits per weight
-                    # - 2 × 32-bit scales per layer (alpha_pos, alpha_neg)
                     
                     weight_bits = params * 2  # 2 bits per ternary weight
                     scale_bits = 2 * 32  # 2 float32 scales
@@ -214,7 +202,7 @@ class CompressionAnalyzer:
                     quantized_bits += layer_bits
                     quantized_params += params
                     
-                else:  # Not quantized - keep as FP32
+                else:  # Not quantized 
                     fp32_bits = params * 32
                     fp32_layers.append({
                         'name': name,
@@ -236,7 +224,6 @@ class CompressionAnalyzer:
         print(f"  Total bits: {quantized_bits / 1e9:.2f} Gb")
         print(f"  Estimated size: {results['quantized_size_mb']:.2f} MB\n")
         
-        # ========== COMPRESSION METRICS ==========
         compression_ratio = results['baseline_size_mb'] / results['quantized_size_mb']
         bit_reduction = (baseline_bits - quantized_bits) / baseline_bits * 100
         
@@ -246,7 +233,6 @@ class CompressionAnalyzer:
         print(f"  Size reduction: {results['baseline_size_mb'] - results['quantized_size_mb']:.2f} MB")
         print(f"  Effective bits per weight: {quantized_bits / quantized_params:.4f} bits\n")
         
-        # ========== DETAILED BREAKDOWN ==========
         if ternary_layers:
             total_ternary_weight_bits = sum(l['weight_bits'] for l in ternary_layers)
             total_ternary_scale_bits = sum(l['scale_bits'] for l in ternary_layers)
@@ -381,21 +367,12 @@ class CompressionAnalyzer:
         print(f"  Bit reduction: {theoretical['bit_reduction']:.1f}%")
         print(f"  Effective bits/weight: {theoretical['quantized_bits'] / theoretical['quantized_params']:.4f}\n")
         
-        print(f"Actual File Compression:")
-        print(f"  Ratio: {actual['actual_ratio']:.2f}x")
-        print(f"  Size saved: {actual['baseline_mb'] - actual['quantized_mb']:.2f} MB\n")
         
         print(f"Quantization Coverage:")
         total = coverage['total_params']
         quant_pct = coverage['quantized_params'] / total * 100
         print(f"  {quant_pct:.1f}% of parameters quantized")
         print(f"  {coverage['quantized_params']:,} / {total:,} parameters\n")
-        
-        print(f"Theoretical vs Actual Compression:")
-        ratio_diff = theoretical['compression_ratio'] - actual['actual_ratio']
-        print(f"  Theoretical: {theoretical['compression_ratio']:.2f}x")
-        print(f"  Actual: {actual['actual_ratio']:.2f}x")
-        print(f"  Difference: {ratio_diff:+.2f}x (overhead from checkpoint format, optimizer state, etc.)\n")
         
         print("="*80 + "\n")
 
@@ -407,12 +384,12 @@ def main():
         epilog="""
 Examples:
   # Analyze TTQ model
-  python analyze_compression.py \\
+  python compression_calculation.py \\
     --baseline yolo11n.pt \\
     --quantized ttq_checkpoints/yolo11n/stage1_progressive_final/best.pt
 
   # Analyze BitLinear model
-  python analyze_compression.py \\
+  python compression_calculation.py \\
     --baseline yolo11n.pt \\
     --quantized checkpoints/stage2_c2psa_standard/best.pt
         """)
