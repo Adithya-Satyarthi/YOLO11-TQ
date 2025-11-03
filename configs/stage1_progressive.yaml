@@ -10,7 +10,7 @@ model_size: 'x'  # YOLO11 size (nano, small, medium, large, xlarge)
 base:
   checkpoint_dir: 'ttq_checkpoints'  # Base directory for all checkpoints
   wandb_project: 'ttq-yolo'          # Wandb project name
-  wandb_entity:  # Your wandb username/team otherwise put use_wandb to false
+  wandb_entity:  # Your wandb username/team and put use_wandb to true
 
 # ============================================================================
 # STAGE DEFINITIONS
@@ -47,7 +47,7 @@ stages:
     logging:
       name: 'stage1_progressive_shallow'
       save_dir: '${base.checkpoint_dir}/yolo11${model_size}/stage1_progressive'  # yolo11n/stage1_progressive
-      use_wandb: true
+      use_wandb: false
       wandb_project: '${base.wandb_project}'
       wandb_entity: '${base.wandb_entity}'
       wandb_run_name: 'yolo11${model_size}_stage1'  # Unique wandb run name
@@ -85,7 +85,7 @@ stages:
     logging:
       name: 'stage1_progressive_middle'
       save_dir: '${base.checkpoint_dir}/yolo11${model_size}/stage1_progressive_middle'  # yolo11n/stage2_progressive
-      use_wandb: true
+      use_wandb: false
       wandb_project: '${base.wandb_project}'
       wandb_entity: '${base.wandb_entity}'
       wandb_run_name: 'yolo11${model_size}_stage2'
@@ -123,7 +123,7 @@ stages:
     logging:
       name: 'stage3_progressive_deep'
       save_dir: '${base.checkpoint_dir}/yolo11${model_size}/stage1_progressive_final'  
-      use_wandb: true
+      use_wandb: false
       wandb_project: '${base.wandb_project}'
       wandb_entity: '${base.wandb_entity}'
       wandb_run_name: 'yolo11${model_size}_stage3'
