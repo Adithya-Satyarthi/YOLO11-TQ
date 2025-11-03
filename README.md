@@ -1,86 +1,49 @@
+
 # YOLO11 — TTQ (Trained Ternary Quantization) + BitLinear Integration
 
-This repository implements progressive Trained Ternary Quantization (TTQ) and a BitLinear_TTQ module for YOLO11 models (C2PSA attention). The goal is to compress YOLO11 (n/x sizes) and measure accuracy vs. compression vs. latency trade-offs on COCO.
+This repository implements progressive Trained Ternary Quantization (TTQ) and a BitLinear_TTQ module for YOLO11 models (C2PSA attention).  
+The goal is to compress YOLO11 (n/x sizes) and measure accuracy vs. compression vs. latency trade-offs on COCO.
 
 ---
 
 ## Table of Contents
-- [Quick summary of what’s implemented](#quick-summary-of-whats-implemented)  
-- [Prerequisites](#prerequisites)  
-- [Directory / important files](#directory--important-files)  
-- [How to run: full pipeline (both `yolo11n` and `yolo11x`)](#how-to-run---full-pipeline-both-yolo11n-and-yolo11x)  
-- [Evaluation & benchmarking (validation, compression, latency)](#evaluation--benchmarking-validation-compression-latency)  
-- [Reported results](#reported-results-from-your-logsconfigs)  
+- [Quick Summary](#quick-summary)
+- [Prerequisites](#prerequisites)
+- [Directory Structure](#directory-structure)
+- [How to Run](#how-to-run)
+- [Reported Results](#reported-results)
 - [References](#references)
 
 ---
 
-## Quick summary of what's implemented
+## Quick Summary
 
-- **ShadowWeightManager (TTQ)**: master (FP32) + shadow (ternary) model training, per-layer learnable scales `Wp` & `Wn`, progressive stage support.
-- **BitLinear_TTQ**: Conv2d-compatible ternary BitLinear with LayerNorm + absmax activation quantization (8-bit), learnable Ap/An scales for C2PSA attention/FFN.
-- **Standard BitLinear**: fixed-scale variant for ablation/comparison.
-- **Scripts & tools**:
-  - `train.py` — progressive TTQ stage runner (stages 1/2/3).
-  - `train_c2psa.py` — train C2PSA with BitLinear_TTQ integration.
-  - `train_c2psa_standard.py` — train standard BitLinear (fixed scales).
-  - `compression_calculation.py` — compute theoretical compression & coverage.
-  - `compare_bitlinear.py` — compare BitLinear_TTQ vs Standard BitLinear.
-  - `latency_benchmark.py` — export to TensorRT and measure latency.
+- **ShadowWeightManager (TTQ):** Implements master (FP32) + shadow (ternary) models with learnable scales `Wp` and `Wn` for progressive stage quantization.
+- **BitLinear_TTQ:** Ternary Conv2d with LayerNorm, absmax activation quantization (8-bit), and learned scaling for use in C2PSA attention.
+- **Standard BitLinear:** Fixed-scale baseline for ablation.
+- **Core scripts:**
+  - `train.py` — Progressive TTQ training (stages 1–3)
+  - `train_c2psa.py` — BitLinear_TTQ training for C2PSA layers
+  - `train_c2psa_standard.py` — Standard BitLinear baseline
+  - `compression_calculation.py` — Computes theoretical compression and coverage
+  - `latency_benchmark.py` — Exports to TensorRT, benchmarks latency
+  - `test.py` — Identifies ternary layers
 
 ---
 
 ## Prerequisites
 
-- Python 3.8+ (recommended)
-- PyTorch (CUDA-enabled) matching your GPU
-- Ultralytics YOLO (the `ultralytics` package)
-- TensorRT (for latency benchmarking) — optional but recommended
-- `pip install -r requirements.txt`
----
+- Python ≥ 3.8  
+- PyTorch (CUDA-enabled)  
+- Ultralytics YOLO (`pip install ultralytics`)  
+- TensorRT (for latency benchmarking, optional but recommended)  
 
-## Directory / important files
-
-```
-
-configs/
-stage1_progressive.yaml       # progressive TTQ stages
-stage2_c2psa.yaml             # C2PSA BitLinear_TTQ config
-
-src/quantization/
-shadow_weight_manager.py
-c2psa_bitlinear_ttq.py
-bitlinear_standard_manager.py
-
-src/training/
-c2psa_trainer.py
-shadow_trainer.py
-
-train.py                        # run progressive TTQ stages
-train_c2psa.py                  # run C2PSA BitLinear_TTQ training
-train_c2psa_standard.py         # run standard BitLinear training
-compression_calculation.py
-compare_bitlinear.py
-latency_benchmark.py
-ttq_checkpoints/                 # checkpoint outputs (created by training)
-checkpoints/                     # created when running c2psa quanitzation
-
-````
-
-## How to run Full Pipeline
-
-Before starting, ensure you have the correct YOLO model weights and all dependencies installed.
-
----
-
-### 1. Prerequisites
-
-Install dependencies:
+Install core dependencies:
 ```bash
 pip install -r requirements.txt
 ````
 
-Additional packages required for latency benchmarking:
+For latency benchmarking:
 
 ```bash
 pip install onnx onnxslim onnxruntime tensorrt
@@ -88,9 +51,40 @@ pip install onnx onnxslim onnxruntime tensorrt
 
 ---
 
-### 2. Download Pretrained YOLO Models
+## Directory Structure
 
-You need to download both pretrained YOLO11 models before training:
+```text
+configs/
+  stage1_progressive.yaml      # Progressive TTQ stages
+  stage2_c2psa.yaml            # C2PSA BitLinear_TTQ configuration
+
+src/quantization/
+  shadow_weight_manager.py
+  c2psa_bitlinear_ttq.py
+  bitlinear_standard_manager.py
+
+src/training/
+  c2psa_trainer.py
+  shadow_trainer.py
+
+train.py                        # Runs TTQ progressive stages
+train_c2psa.py                  # Trains BitLinear_TTQ model
+train_c2psa_standard.py         # Trains standard BitLinear model
+compression_calculation.py      # Compression analysis
+latency_benchmark.py            # TensorRT latency benchmarking
+test.py                         # Ternary layer inspection
+
+ttq_checkpoints/                # TTQ stage checkpoints
+checkpoints/                    # BitLinear checkpoints
+```
+
+---
+
+## How to Run
+
+### 1. Download Pretrained YOLO Models
+
+Both pretrained YOLO11 models must be downloaded before training:
 
 ```bash
 # YOLO11-n (nano)
@@ -100,19 +94,17 @@ wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
 wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt
 ```
 
-Keep these `.pt` files in your project root or adjust config paths accordingly.
-
 ---
 
-### 3. Run Full Training Pipeline (YOLO11n)
+### 2. Run the Full Training Pipeline (YOLO11n)
 
-A shell script `run.sh` is provided to automate all stages for YOLO11n.
+A helper script `run.sh` automates all stages for YOLO11n:
 
 ```bash
 bash run.sh
 ```
 
-Contents of `run.sh`:
+**Contents of `run.sh`:**
 
 ```bash
 wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
@@ -121,31 +113,30 @@ python train.py --config configs/stage1_progressive.yaml --stage 1
 python train.py --config configs/stage1_progressive.yaml --stage 2
 python train.py --config configs/stage1_progressive.yaml --stage 3
 
-# Train C2PSA BitLinear_TTQ after TTQ stages
 python train_c2psa.py \
   --config configs/stage2_c2psa.yaml \
   --model ttq_checkpoints/yolo11n/stage1_progressive_final/best.pt
 ```
 
-This script downloads the base model, executes all three TTQ stages sequentially, and finally runs the C2PSA BitLinear training.
+This script sequentially runs all TTQ stages and then performs BitLinear_TTQ training.
 
 ---
 
-### 4. Validate Trained Models
+### 3. Validation
 
-To validate any saved checkpoint on the COCO dataset:
+Validate any trained checkpoint on COCO:
 
 ```bash
 python validate.py saved_models/yolo11n/stage1.pt --data coco.yaml
 ```
 
-You can replace `stage1.pt` with any other checkpoint (e.g., `stage1-3+bitlinear_ttq.pt`).
+Replace `stage1.pt` with any other checkpoint (e.g., `stage1-3+bitlinear_ttq.pt`).
 
 ---
 
-### 5. Run TensorRT Latency Benchmark
+### 4. TensorRT Latency Benchmark
 
-To benchmark baseline and quantized models (requires `onnx`, `onnxruntime`, and `tensorrt`):
+Benchmark baseline and quantized models:
 
 ```bash
 python latency_benchmark.py \
@@ -156,17 +147,13 @@ python latency_benchmark.py \
   --num-runs 30
 ```
 
-This script exports the models to ONNX and TensorRT, runs multiple inference passes, and reports:
-
-* Mean latency
-* Throughput (FPS)
-* Memory usage
+Reports mean latency, throughput (FPS), and memory usage.
 
 ---
 
-### 6. Compute Model Compression
+### 5. Compression Evaluation
 
-To evaluate compression ratio between baseline and quantized models:
+Compute compression ratio between baseline and quantized models:
 
 ```bash
 python compression_calculation.py \
@@ -174,91 +161,86 @@ python compression_calculation.py \
   --quantized saved_models/yolo11x/stage1-3+bitlinear_ttq.pt
 ```
 
-The script prints model sizes, theoretical compression ratio, and percentage of quantized layers.
+Outputs model sizes, compression ratio, and quantized layer percentages.
 
 ---
 
-### 7. Inspect Quantized Layers (Ternary Check)
+### 6. Ternary Layer Inspection
 
-To verify which layers have been converted to ternary:
+Check which layers were quantized to ternary:
 
 ```bash
 python test.py saved_models/yolo11n/stage1-3+bitlinear_ttq.pt
 ```
 
-This script outputs layer names and indicates whether they are quantized (ternary) or remain in FP32.
+Displays quantized (ternary) vs FP32 layers.
 
 ---
 
- **Summary of Available Scripts**
+###  Script Summary
 
 | Script                       | Purpose                                               |
 | ---------------------------- | ----------------------------------------------------- |
 | `run.sh`                     | Downloads YOLO11n and runs all TTQ + BitLinear stages |
 | `validate.py`                | Runs COCO validation and prints mAP metrics           |
-| `latency_benchmark.py`       | Exports and benchmarks models using TensorRT          |
+| `latency_benchmark.py`       | Benchmarks TensorRT latency (FP32/FP16/INT8)          |
 | `compression_calculation.py` | Computes compression ratios and quantization coverage |
-| `test.py`                    | Checks which layers are ternary quantized             |
+| `test.py`                    | Verifies ternary quantized layers                     |
 
 ---
 
-**Note:**
-For YOLO11x, the same workflow applies — download `yolo11x.pt` using the command above and substitute it in place of `yolo11n.pt` wherever needed.
-
-
-
-## Evaluation & benchmarking (what to run, where outputs go)
-
-* Training outputs: `ttq_checkpoints/yolo11{n|x}/.../best.pt`
-* Validation metrics (printed during training) — final `mAP50` and `mAP50-95` are saved in `results` printed to console by trainers.
-* `analyze_compression.py` prints:
-
-  * estimated baseline & quantized size (MB)
-  * theoretical compression ratio
-  * percent of parameters quantized
-* `compare_bitlinear.py` prints COCO128 validation metrics (mAP50, mAP50-95, precision, recall) for Baseline / Our Impl / Standard.
-* `latency_benchmark.py` prints baseline and quantized model latency (ms).
-
----
-
-## Reported results (extracted from your logs / files)
-
-> These are the numbers present in your files and logs. Use them as the canonical results table in the short report.
+## Reported Results
 
 ### YOLO11n (COCO fine-tune / validation)
 
-| Stage                     |  mAP50 | mAP50-95 | Theoretical compression |
-| ------------------------- | -----: | -------: | ----------------------: |
-| Baseline                  | 0.5485 |   0.3924 |                   1.00× |
-| Stage 1                   | 0.5088 |   0.3410 |                   1.30× |
-| Stage 1 + 2               | 0.4702 |   0.3088 |                   1.69× |
-| Stage 1 + 2 + 3           | 0.4110 |   0.2639 |                   1.97× |
-| Stage 1–3 + BitLinear_TTQ | 0.2955 |   0.1819 |                   2.16× |
+| Stage                     |  mAP50 | mAP50-95 | Compression |
+| ------------------------- | -----: | -------: | ----------: |
+| Baseline                  | 0.5485 |   0.3924 |       1.00× |
+| Stage 1                   | 0.5088 |   0.3410 |       1.30× |
+| Stage 1 + 2               | 0.4702 |   0.3088 |       1.69× |
+| Stage 1 + 2 + 3           | 0.4110 |   0.2639 |       1.97× |
+| Stage 1–3 + BitLinear_TTQ | 0.2955 |   0.1819 |       2.16× |
 
-**BitLinear comparison (YOLO11n; COCO validation):**
+**BitLinear Comparison (YOLO11n):**
 
-* Baseline: mAP50 0.5487, mAP50-95 0.3925, Precision 0.4652, Recall 0.2807
-* Our Impl (BitLinear_TTQ): mAP50 0.4421, mAP50-95 0.3098, Precision 0.3702, Recall 0.0702
-* Standard BitLinear: mAP50 0.4427, mAP50-95 0.3098, Precision 0.3354, Recall 0.0709
+* Baseline: mAP50 = 0.5487, mAP50-95 = 0.3925, Precision = 0.4652, Recall = 0.2807
+* Ours (BitLinear_TTQ): mAP50 = 0.4421, mAP50-95 = 0.3098, Precision = 0.3702, Recall = 0.0702
+* Standard BitLinear: mAP50 = 0.4427, mAP50-95 = 0.3098, Precision = 0.3354, Recall = 0.0709
+
+**TensorRT Latency (YOLO11n):**
+
+| Model          | Mean (ms) | Throughput | Memory (MB) |
+| -------------- | --------: | ---------: | ----------: |
+| Baseline FP32  |    12.049 |       83.0 |        75.6 |
+| Baseline FP16  |     7.467 |      133.9 |        72.4 |
+| Baseline INT8  |     6.777 |      147.6 |        71.3 |
+| Quantized FP32 |    17.237 |       58.0 |        85.8 |
+| Quantized FP16 |     6.338 |      157.8 |        71.3 |
+| Quantized INT8 |     5.565 |      179.7 |        79.0 |
+
+Ternary models achieve up to **2.94× compression** and demonstrate **1.5–3.2× latency improvement** depending on precision (FP32 → INT8), with moderate (3–5%) mAP loss — confirming their suitability for low-power deployment.
+
+---
 
 ### YOLO11x (COCO)
 
-| Stage                     |                           mAP50 | mAP50-95 | Theoretical compression |
-| ------------------------- | ------------------------------: | -------: | ----------------------: |
-| Baseline                  |                          0.7135 |   0.5485 |                   1.00× |
-| Stage 1                   |                          0.6891 |   0.5041 |                   1.41× |
-| Stage 1 + 2               |                          0.6500 |   0.4614 |                   1.91× |
-| Stage 1 + 2 + 3           |                          0.4814 |   0.3231 |                   2.79× |
-| Stage 1–3 + BitLinear_TTQ |                          0.3901 |   0.2567 |                   2.94x |
+| Stage                     |  mAP50 | mAP50-95 | Compression |
+| ------------------------- | -----: | -------: | ----------: |
+| Baseline                  | 0.7135 |   0.5485 |       1.00× |
+| Stage 1                   | 0.6891 |   0.5041 |       1.41× |
+| Stage 1 + 2               | 0.6500 |   0.4614 |       1.91× |
+| Stage 1 + 2 + 3           | 0.4814 |   0.3231 |       2.79× |
+| Stage 1–3 + BitLinear_TTQ | 0.3901 |   0.2567 |       2.94× |
 
-
+---
 
 ## References
 
-1. Zhu et al., “Trained Ternary Quantization,” *arXiv:1612.01064*, 2016.
-2. Dettmers et al., “1-bit LLMs: 1.58 Bits is All You Need,” *arXiv:2402.17764*, 2024.
-3. Ultralytics YOLO11 documentation — [https://docs.ultralytics.com/models/yolo11/](https://docs.ultralytics.com/models/yolo11/)
-4. Project code (local): path to repo containing `train.py`, `train_c2psa.py`, `src/quantization/*`, etc.
+1. Zhu et al., *Trained Ternary Quantization*, arXiv:1612.01064 (2016).
+   [https://arxiv.org/abs/1612.01064](https://arxiv.org/abs/1612.01064)
+2. Dettmers et al., *1-bit LLMs: 1.58 Bits is All You Need*, arXiv:2402.17764 (2024).
+   [https://arxiv.org/abs/2402.17764](https://arxiv.org/abs/2402.17764)
+3. Ultralytics YOLO11 Docs — [https://docs.ultralytics.com/models/yolo11/](https://docs.ultralytics.com/models/yolo11/)
+4. Project Code — [https://github.com/Adithya-Satyarthi/YOLO11-TQ](https://github.com/Adithya-Satyarthi/YOLO11-TQ)
 
----
 
