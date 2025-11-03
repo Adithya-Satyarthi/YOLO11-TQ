@@ -67,109 +67,145 @@ checkpoints/                     # created when running c2psa quanitzation
 
 ````
 
+## How to run Full Pipeline
+
+Before starting, ensure you have the correct YOLO model weights and all dependencies installed.
+
 ---
 
-## How to run — full pipeline (both `yolo11n` and `yolo11x`)
+### 1. Prerequisites
 
-> **Important:** `configs/stage1_progressive.yaml` contains `model_size: 'x'` by default. Change this field to `'n'` or `'x'` before running each variant, or create two copies (e.g., `stage1_progressive_n.yaml` and `stage1_progressive_x.yaml`) with `model_size` set accordingly.
-
-Below are the exact commands and order to reproduce the pipeline and results:
-
-### A. Prepare configs for `yolo11n` and `yolo11x`
-
-Option 1 — edit in-place:
+Install dependencies:
 ```bash
-# For YOLO11-n (nano)
-sed -i "s/model_size: 'x'/model_size: 'n'/" configs/stage1_progressive.yaml
-
-# For YOLO11-x (later), change back to 'x' before running
-# sed -i "s/model_size: 'n'/model_size: 'x'/" configs/stage1_progressive.yaml
+pip install -r requirements.txt
 ````
 
-Option 2 — duplicate file:
+Additional packages required for latency benchmarking:
 
 ```bash
-cp configs/stage1_progressive.yaml configs/stage1_progressive_n.yaml
-sed -i "s/model_size: 'x'/model_size: 'n'/" configs/stage1_progressive_n.yaml
-
-cp configs/stage1_progressive.yaml configs/stage1_progressive_x.yaml
-sed -i "s/model_size: 'x'/model_size: 'x'/" configs/stage1_progressive_x.yaml
+pip install onnx onnxslim onnxruntime tensorrt
 ```
 
-### B. Progressive TTQ stages (run for each model size separately)
+---
 
-Run Stage 1, 2, 3 in order. Example for `yolo11n` (using `stage1_progressive_n.yaml`):
+### 2. Download Pretrained YOLO Models
+
+You need to download both pretrained YOLO11 models before training:
 
 ```bash
-# Stage 1: shallow
-python train.py --config configs/stage1_progressive_n.yaml --stage 1
+# YOLO11-n (nano)
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
 
-# Stage 2: middle (will load stage1 checkpoint automatically)
-python train.py --config configs/stage1_progressive_n.yaml --stage 2
-
-# Stage 3: deep (will load stage2 checkpoint automatically)
-python train.py --config configs/stage1_progressive_n.yaml --stage 3
+# YOLO11-x (extra-large)
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt
 ```
 
-Repeat the above for `yolo11x` (use `_x.yaml` or edit config back to `'x'`).
+Keep these `.pt` files in your project root or adjust config paths accordingly.
 
-**Checkpoints saved here (example):**
+---
 
-```
-ttq_checkpoints/yolo11n/stage1_progressive/best.pt
-ttq_checkpoints/yolo11n/stage1_progressive_middle/best.pt
-ttq_checkpoints/yolo11n/stage1_progressive_final/best.pt
-```
+### 3. Run Full Training Pipeline (YOLO11n)
 
-### C. BitLinear_TTQ for C2PSA (after TTQ stages)
-
-After progressive TTQ finishes, run C2PSA BitLinear_TTQ training:
+A shell script `run.sh` is provided to automate all stages for YOLO11n.
 
 ```bash
-# YOLO11n
-python train_c2psa.py --config configs/stage2_c2psa.yaml --model yolo11n.pt
-
-# YOLO11x
-python train_c2psa.py --config configs/stage2_c2psa.yaml --model yolo11x.pt
+bash run.sh
 ```
 
-If you want the **Standard BitLinear** (fixed scales) baseline:
+Contents of `run.sh`:
 
 ```bash
-python train_c2psa_standard.py --config configs/stage2_c2psa.yaml --model yolo11n.pt
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
+
+python train.py --config configs/stage1_progressive.yaml --stage 1
+python train.py --config configs/stage1_progressive.yaml --stage 2
+python train.py --config configs/stage1_progressive.yaml --stage 3
+
+# Train C2PSA BitLinear_TTQ after TTQ stages
+python train_c2psa.py \
+  --config configs/stage2_c2psa.yaml \
+  --model ttq_checkpoints/yolo11n/stage1_progressive_final/best.pt
 ```
 
-### D. Validation, compression analysis and comparison
+This script downloads the base model, executes all three TTQ stages sequentially, and finally runs the C2PSA BitLinear training.
 
-Validate quantized models and compute compression:
+---
+
+### 4. Validate Trained Models
+
+To validate any saved checkpoint on the COCO dataset:
 
 ```bash
-# Example: analyze TTQ quantized model (adjust paths to your checkpoints)
-python analyze_compression.py \
-  --baseline yolo11n.pt \
-  --quantized ttq_checkpoints/yolo11n/stage1_progressive_final/best.pt
+python validate.py saved_models/yolo11n/stage1.pt --data coco.yaml
 ```
 
-Compare BitLinear implementations:
+You can replace `stage1.pt` with any other checkpoint (e.g., `stage1-3+bitlinear_ttq.pt`).
 
-```bash
-python compare_bitlinear.py \
-  checkpoints/stage2_c2psa/best.pt \
-  checkpoints/stage2_c2psa_standard/best.pt \
-  yolo11n.pt
-```
+---
 
-### E. TensorRT latency benchmark
+### 5. Run TensorRT Latency Benchmark
+
+To benchmark baseline and quantized models (requires `onnx`, `onnxruntime`, and `tensorrt`):
 
 ```bash
 python latency_benchmark.py \
-  --baseline baseline_yolo11n.pt \
-  --quantized path/to/quantized_model.pt
+  --baseline yolo11n.pt \
+  --quantized saved_models/yolo11n/stage1-3+bitlinear_ttq.pt \
+  --export-fp16 \
+  --export-int8 \
+  --num-runs 30
 ```
 
-The script will attempt to export to TensorRT (FP16) and run multiple runs to report mean latency.
+This script exports the models to ONNX and TensorRT, runs multiple inference passes, and reports:
+
+* Mean latency
+* Throughput (FPS)
+* Memory usage
 
 ---
+
+### 6. Compute Model Compression
+
+To evaluate compression ratio between baseline and quantized models:
+
+```bash
+python compression_calculation.py \
+  --baseline yolo11x.pt \
+  --quantized saved_models/yolo11x/stage1-3+bitlinear_ttq.pt
+```
+
+The script prints model sizes, theoretical compression ratio, and percentage of quantized layers.
+
+---
+
+### 7. Inspect Quantized Layers (Ternary Check)
+
+To verify which layers have been converted to ternary:
+
+```bash
+python test.py saved_models/yolo11n/stage1-3+bitlinear_ttq.pt
+```
+
+This script outputs layer names and indicates whether they are quantized (ternary) or remain in FP32.
+
+---
+
+ **Summary of Available Scripts**
+
+| Script                       | Purpose                                               |
+| ---------------------------- | ----------------------------------------------------- |
+| `run.sh`                     | Downloads YOLO11n and runs all TTQ + BitLinear stages |
+| `validate.py`                | Runs COCO validation and prints mAP metrics           |
+| `latency_benchmark.py`       | Exports and benchmarks models using TensorRT          |
+| `compression_calculation.py` | Computes compression ratios and quantization coverage |
+| `test.py`                    | Checks which layers are ternary quantized             |
+
+---
+
+**Note:**
+For YOLO11x, the same workflow applies — download `yolo11x.pt` using the command above and substitute it in place of `yolo11n.pt` wherever needed.
+
+
 
 ## Evaluation & benchmarking (what to run, where outputs go)
 
