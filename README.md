@@ -1,8 +1,5 @@
 # YOLO11 — TTQ (Trained Ternary Quantization) + BitLinear Integration
 
-**Author:** Adithya Satyarthi (EP22B049), IIT Madras  
-**Repo:** `YOLO11-TQ` (local project files provided)
-
 This repository implements progressive Trained Ternary Quantization (TTQ) and a BitLinear_TTQ module for YOLO11 models (C2PSA attention). The goal is to compress YOLO11 (n/x sizes) and measure accuracy vs. compression vs. latency trade-offs on COCO.
 
 ---
@@ -28,7 +25,7 @@ This repository implements progressive Trained Ternary Quantization (TTQ) and a 
   - `train.py` — progressive TTQ stage runner (stages 1/2/3).
   - `train_c2psa.py` — train C2PSA with BitLinear_TTQ integration.
   - `train_c2psa_standard.py` — train standard BitLinear (fixed scales).
-  - `analyze_compression.py` — compute theoretical compression & coverage.
+  - `compression_calculation.py` — compute theoretical compression & coverage.
   - `compare_bitlinear.py` — compare BitLinear_TTQ vs Standard BitLinear.
   - `latency_benchmark.py` — export to TensorRT and measure latency.
 
@@ -40,9 +37,7 @@ This repository implements progressive Trained Ternary Quantization (TTQ) and a 
 - PyTorch (CUDA-enabled) matching your GPU
 - Ultralytics YOLO (the `ultralytics` package)
 - TensorRT (for latency benchmarking) — optional but recommended
-- `pip install -r requirements.txt` (create one containing: `torch`, `ultralytics`, `pyyaml`, `numpy`, `tqdm`, `wandb` (optional) etc.)
-- GPU with >=8 GB (preferable) for training; if memory issues occur, worker count is forced to `0` in trainers.
-
+- `pip install -r requirements.txt`
 ---
 
 ## Directory / important files
@@ -52,7 +47,6 @@ This repository implements progressive Trained Ternary Quantization (TTQ) and a 
 configs/
 stage1_progressive.yaml       # progressive TTQ stages
 stage2_c2psa.yaml             # C2PSA BitLinear_TTQ config
-stage3_progressive.yaml      # (if present) final stage config
 
 src/quantization/
 shadow_weight_manager.py
@@ -61,15 +55,16 @@ bitlinear_standard_manager.py
 
 src/training/
 c2psa_trainer.py
-(other trainer utilities)
+shadow_trainer.py
 
 train.py                        # run progressive TTQ stages
 train_c2psa.py                  # run C2PSA BitLinear_TTQ training
 train_c2psa_standard.py         # run standard BitLinear training
-analyze_compression.py
+compression_calculation.py
 compare_bitlinear.py
 latency_benchmark.py
 ttq_checkpoints/                 # checkpoint outputs (created by training)
+checkpoints/                     # created when running c2psa quanitzation
 
 ````
 
