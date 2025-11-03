@@ -42,6 +42,21 @@ Install core dependencies:
 ```bash
 pip install -r requirements.txt
 ````
+This repository uses **Git Large File Storage (LFS)** to store the trained `.pt` model files in `saved_models/`.
+
+To download the full models, make sure you have Git LFS installed:
+
+### 1. Install Git LFS
+
+- **macOS:** `brew install git-lfs`
+- **Windows:** Download and run the installer from https://git-lfs.github.com/
+- **Linux:** `sudo apt install git-lfs` (Debian/Ubuntu) or see https://git-lfs.github.com/
+
+After installing, initialize it:
+
+```bash
+git lfs install
+```
 
 For latency benchmarking:
 
@@ -177,6 +192,26 @@ python test.py saved_models/yolo11n/stage1-3+bitlinear_ttq.pt
 Displays quantized (ternary) vs FP32 layers.
 
 ---
+
+### 7. Comparining Standard vs TTQ based Bitlinear quantization
+
+Compare the two Bitlinear implmentations
+
+You need to first train yolo11n using both implementaion
+You can also modify the config file to use coco128 for faster training.
+```bash
+python train_c2psa.py --config configs/stage2_c2psa.yaml --model yolo11n.pt
+python train_c2psa_standard.py --config configs/stage2_c2psa.yaml --model yolo11n.pt
+```
+
+```bash
+python compare_bitlinear.py checkpoints/stage2_c2psa_baseline/best.pt  checkpoints/stage2_c2psa_standard_baseline/best.pt
+```
+
+Outputs the accuracy analysis of both the models
+
+---
+
 
 ###  Script Summary
 
