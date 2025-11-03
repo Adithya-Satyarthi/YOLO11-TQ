@@ -8,10 +8,9 @@ This repository implements progressive Trained Ternary Quantization (TTQ) and a 
 - [Quick summary of what’s implemented](#quick-summary-of-whats-implemented)  
 - [Prerequisites](#prerequisites)  
 - [Directory / important files](#directory--important-files)  
-- [How to run — full pipeline (both `yolo11n` and `yolo11x`)](#how-to-run---full-pipeline-both-yolo11n-and-yolo11x)  
+- [How to run: full pipeline (both `yolo11n` and `yolo11x`)](#how-to-run---full-pipeline-both-yolo11n-and-yolo11x)  
 - [Evaluation & benchmarking (validation, compression, latency)](#evaluation--benchmarking-validation-compression-latency)  
-- [Reported results (from your logs/configs)](#reported-results-from-your-logsconfigs)  
-- [Notes & troubleshooting](#notes--troubleshooting)  
+- [Reported results](#reported-results-from-your-logsconfigs)  
 - [References](#references)
 
 ---
@@ -200,16 +199,11 @@ The script will attempt to export to TensorRT (FP16) and run multiple runs to re
 | Stage 1 + 2 + 3           | 0.4110 |   0.2639 |                   1.97× |
 | Stage 1–3 + BitLinear_TTQ | 0.2955 |   0.1819 |                   2.16× |
 
-**BitLinear comparison (YOLO11n; COCO128 validation):**
+**BitLinear comparison (YOLO11n; COCO validation):**
 
 * Baseline: mAP50 0.5487, mAP50-95 0.3925, Precision 0.4652, Recall 0.2807
 * Our Impl (BitLinear_TTQ): mAP50 0.4421, mAP50-95 0.3098, Precision 0.3702, Recall 0.0702
 * Standard BitLinear: mAP50 0.4427, mAP50-95 0.3098, Precision 0.3354, Recall 0.0709
-
-**TensorRT Latency (YOLO11n):**
-
-* Baseline FP32: 13.2 ms → Quantized: 9.1 ms
-* BitLinear_TTQ Quantized (final): 7.8 ms
 
 ### YOLO11x (COCO)
 
@@ -219,22 +213,9 @@ The script will attempt to export to TensorRT (FP16) and run multiple runs to re
 | Stage 1                   |                          0.6891 |   0.5041 |                   1.41× |
 | Stage 1 + 2               |                          0.6500 |   0.4614 |                   1.91× |
 | Stage 1 + 2 + 3           |                          0.4814 |   0.3231 |                   2.79× |
-| Stage 1–3 + BitLinear_TTQ | training not finished / pending |          |                         |
+| Stage 1–3 + BitLinear_TTQ |                          0.3901 |   0.2567 |                   2.94x |
 
-> Notes: YOLO11x final TTQ+BitLinear stage was not finished in the files you provided.
 
----
-
-## Notes & troubleshooting
-
-* **Set workers to 0** if you hit memory issues — code already forces `workers=0` for some trainers (to prevent DRAM explosion). If you see DataLoader OOM or multiprocessing failures, ensure `workers=0`.
-* **Model weight paths:** `train.py` checks for previous stage checkpoints. If a stage fails to find the earlier stage's `best.pt`, it will raise an error. Run stages in order.
-* **WandB:** optional — set `use_wandb` in config or leave false.
-* **GPU memory:** for `yolo11x` expect substantially higher memory use; run on a GPU with sufficient memory.
-* **TensorRT export:** may fail if TensorRT not installed or incompatible CUDA / PyTorch — `latency_benchmark.py` falls back to PyTorch inference if export fails.
-* **Reproducibility:** Use same `configs/*` settings (batch, imgsz, lr) across runs for fair comparisons.
-
----
 
 ## References
 
@@ -244,26 +225,4 @@ The script will attempt to export to TensorRT (FP16) and run multiple runs to re
 4. Project code (local): path to repo containing `train.py`, `train_c2psa.py`, `src/quantization/*`, etc.
 
 ---
-
-## Example quick-start (YOLO11n)
-
-```bash
-# 1) Ensure configs/stage1_progressive.yaml has model_size: 'n'
-sed -i "s/model_size: 'x'/model_size: 'n'/" configs/stage1_progressive.yaml
-
-# 2) Stage 1 → Stage 2 → Stage 3
-python train.py --config configs/stage1_progressive.yaml --stage 1
-python train.py --config configs/stage1_progressive.yaml --stage 2
-python train.py --config configs/stage1_progressive.yaml --stage 3
-
-# 3) Train C2PSA BitLinear_TTQ
-python train_c2psa.py --config configs/stage2_c2psa.yaml --model yolo11n.pt
-
-# 4) Analyze compression & compare
-python analyze_compression.py --baseline yolo11n.pt --quantized ttq_checkpoints/yolo11n/stage1_progressive_final/best.pt
-python compare_bitlinear.py checkpoints/stage2_c2psa/best.pt checkpoints/stage2_c2psa_standard/best.pt yolo11n.pt
-
-# 5) Latency benchmark
-python latency_benchmark.py
-```
 
