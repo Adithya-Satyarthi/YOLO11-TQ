@@ -1,11 +1,3 @@
-Thanks — I fixed and expanded the README so it outputs cleanly and is immediately usable.
-I made the structure explicit, added exact commands for running both **yolo11n** and **yolo11x**, clarified config edits, prerequisites, expected checkpoint paths, evaluation and latency steps, and included the results table pulled from your files.
-
-Copy the whole text below into `README.md` (or paste into your repo). If anything still looks off when you paste it, tell me which section/line is mis-rendering and I’ll patch it immediately.
-
----
-
-```markdown
 # YOLO11 — TTQ (Trained Ternary Quantization) + BitLinear Integration
 
 **Author:** Adithya Satyarthi (EP22B049), IIT Madras  
