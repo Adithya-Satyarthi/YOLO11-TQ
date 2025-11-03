@@ -134,7 +134,22 @@ Replace `stage1.pt` with any other checkpoint (e.g., `stage1-3+bitlinear_ttq.pt`
 
 ---
 
-### 4. TensorRT Latency Benchmark
+### 4. Compression Evaluation
+
+Compute compression ratio between baseline and quantized models:
+
+```bash
+python compression_calculation.py \
+  --baseline yolo11x.pt \
+  --quantized saved_models/yolo11x/stage1-3+bitlinear_ttq.pt
+```
+
+Outputs model sizes, compression ratio, and quantized layer percentages.
+
+---
+
+
+### 5. TensorRT Latency Benchmark
 
 Benchmark baseline and quantized models:
 
@@ -148,20 +163,6 @@ python latency_benchmark.py \
 ```
 
 Reports mean latency, throughput (FPS), and memory usage.
-
----
-
-### 5. Compression Evaluation
-
-Compute compression ratio between baseline and quantized models:
-
-```bash
-python compression_calculation.py \
-  --baseline yolo11x.pt \
-  --quantized saved_models/yolo11x/stage1-3+bitlinear_ttq.pt
-```
-
-Outputs model sizes, compression ratio, and quantized layer percentages.
 
 ---
 
