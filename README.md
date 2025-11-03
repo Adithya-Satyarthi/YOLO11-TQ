@@ -46,7 +46,7 @@ This repository uses **Git Large File Storage (LFS)** to store the trained `.pt`
 
 To download the full models, make sure you have Git LFS installed:
 
-### 1. Install Git LFS
+### Install Git LFS
 
 - **macOS:** `brew install git-lfs`
 - **Windows:** Download and run the installer from https://git-lfs.github.com/
@@ -76,7 +76,9 @@ configs/
 src/quantization/
   shadow_weight_manager.py
   c2psa_bitlinear_ttq.py
+  c2psa_bitlinear_standard.py
   bitlinear_standard_manager.py
+  bitlinear_ttq_manager.py
 
 src/training/
   c2psa_trainer.py
@@ -88,9 +90,11 @@ train_c2psa_standard.py         # Trains standard BitLinear model
 compression_calculation.py      # Compression analysis
 latency_benchmark.py            # TensorRT latency benchmarking
 test.py                         # Ternary layer inspection
+compare_bitlinear.py            # Compare Bitlinear implementaions
 
 ttq_checkpoints/                # TTQ stage checkpoints
 checkpoints/                    # BitLinear checkpoints
+saved_models/                   # Contains the trained model you can run to check the resutls
 ```
 
 ---
