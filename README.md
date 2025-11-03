@@ -94,7 +94,7 @@ compare_bitlinear.py            # Compare Bitlinear implementaions
 
 ttq_checkpoints/                # TTQ stage checkpoints
 checkpoints/                    # BitLinear checkpoints
-saved_models/                   # Contains the trained model you can run to check the resutls
+saved_models/                   # Contains the trained model you can run to check the results
 ```
 
 ---
