@@ -284,6 +284,4 @@ This command outputs the accuracy analysis of both models
 2. Dettmers et al., *1-bit LLMs: 1.58 Bits is All You Need*, arXiv:2402.17764 (2024).
    [https://arxiv.org/abs/2402.17764](https://arxiv.org/abs/2402.17764)
 3. Ultralytics YOLO11 Docs — [https://docs.ultralytics.com/models/yolo11/](https://docs.ultralytics.com/models/yolo11/)
-4. Project Code — [https://github.com/Adithya-Satyarthi/YOLO11-TQ](https://github.com/Adithya-Satyarthi/YOLO11-TQ)
-
 
