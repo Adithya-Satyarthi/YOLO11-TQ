@@ -62,9 +62,9 @@ git lfs install
 For latency benchmarking:
 
 ```bash
-pip install onnx onnxslim onnxruntime tensorrt
+pip install onnx onnxslim onnxruntime-gpu tensorrt
 ```
-
+> Note: tensorrt is not supported in python 3.14 as of now, if you are on that version please create a conda enviornment with python 3.11 for latency testing
 ---
 
 ## Directory Structure
