@@ -15,8 +15,7 @@ checkpoints/
 *.pth
 *.ckpt
 *.h5
-!models/
-!models/*.pt
+!saved_models/**/*.pt
 
 # Experiment tracking and logs
 wandb/

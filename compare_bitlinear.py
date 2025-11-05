@@ -205,49 +205,6 @@ def main():
         
         print("└──────────────────┴──────────────┴──────────────┴──────────────┘")
         
-        # Calculate drops
-        print("\n" + "="*90)
-        print("ACCURACY DROP FROM BASELINE")
-        print("="*90)
-        
-        ours_drop = ((baseline_metrics['mAP50'] - ours_metrics['mAP50']) / baseline_metrics['mAP50'] * 100) if baseline_metrics['mAP50'] > 0 else 0
-        std_drop = ((baseline_metrics['mAP50'] - std_metrics['mAP50']) / baseline_metrics['mAP50'] * 100) if baseline_metrics['mAP50'] > 0 else 0
-        
-        print(f"\nmAP50 Drop:")
-        print(f"  Our Implementation: {ours_drop:.2f}%")
-        print(f"  Standard BitLinear: {std_drop:.2f}%")
-        
-        if ours_drop < std_drop:
-            improvement = std_drop - ours_drop
-            print(f"\n Our Implementation is BETTER by {improvement:.2f}% (less accuracy drop)")
-        elif ours_drop > std_drop:
-            degradation = ours_drop - std_drop
-            print(f"\n  Standard BitLinear is BETTER by {degradation:.2f}% (less accuracy drop)")
-        else:
-            print(f"\n Both implementations show similar accuracy drop")
-        
-        # Summary
-        print("\n" + "="*90)
-        print("SUMMARY")
-        print("="*90)
-        
-        print(f"\nModel Compression:")
-        print(f"  Checkpoint size reduction: {(1 - ours_size/baseline_size)*100:.1f}%")
-        
-        print(f"\nOur Implementation (BitLinear_TTQ) Advantages:")
-        print(f"  Learned scales (Ap, An) - adapts to specific layers")
-        print(f"  TTQ with threshold - selective quantization")
-        print(f"  Lower accuracy drop ({ours_drop:.2f}% vs {std_drop:.2f}%)")
-        
-        print(f"\nStandard BitLinear Advantages:")
-        print(f"  Fixed scales - simpler, no training overhead")
-        print(f"  Paper-proven approach")
-        if std_drop < ours_drop:
-            print(f"  Better accuracy retention")
-        
-    print("\n" + "="*90)
-    print(" COMPARISON COMPLETE")
-    print("="*90 + "\n")
 
 
 if __name__ == '__main__':
