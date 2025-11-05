@@ -37,7 +37,7 @@ The goal is to compress YOLO11 (n/x sizes) and measure accuracy vs. compression 
 - Python ≥ 3.8  
 - PyTorch (CUDA-enabled)  
 - Ultralytics YOLO (`pip install ultralytics`)  
-- TensorRT (for latency benchmarking, optional but recommended)  
+- TensorRT (for latency benchmarking)
 
 Install core dependencies:
 ```bash
@@ -198,24 +198,27 @@ Displays quantized (ternary) vs FP32 layers.
 
 ---
 
-### 7. Comparining Standard vs TTQ based Bitlinear quantization
+### 7. Comparing Standard vs TTQ-based Bitlinear Quantization
 
-Compare the two Bitlinear implmentations
+Compare the two Bitlinear implementations.
 
-You need to first train yolo11n using both implementaion
-You can also modify the config file to use coco128 for faster training.
+You can first train **YOLO11n** using both implementations (optional).  
+For faster training, you may modify the config file to use **COCO128**:
+
 ```bash
 python train_c2psa.py --config configs/stage2_c2psa.yaml --model yolo11n.pt
 python train_c2psa_standard.py --config configs/stage2_c2psa.yaml --model yolo11n.pt
 ```
 
+Alternatively, you can the trained models which you can find in the  
+`saved_models/yolo11n/` directory. Use these pretrained models to compare the  
+performance between the **TTQ-based** and **Standard Bitlinear** versions:
+
 ```bash
-python compare_bitlinear.py checkpoints/stage2_c2psa_baseline/best.pt  checkpoints/stage2_c2psa_standard_baseline/best.pt
+python compare_bitlinear.py saved_models/yolo11n/c2psa_ttq.pt saved_models/yolo11n/c2psa_bitlinear.pt
 ```
 
-Outputs the accuracy analysis of both the models
-
----
+This command outputs the accuracy analysis of both models
 
 
 ###  Script Summary
@@ -259,7 +262,6 @@ Outputs the accuracy analysis of both the models
 | Quantized FP16 |     6.338 |      157.8 |        71.3 |
 | Quantized INT8 |     5.565 |      179.7 |        79.0 |
 
-Ternary models achieve up to **2.94× compression** and demonstrate **1.5–3.2× latency improvement** depending on precision (FP32 → INT8), with moderate (3–5%) mAP loss — confirming their suitability for low-power deployment.
 
 ---
 
