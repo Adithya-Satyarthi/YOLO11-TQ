@@ -174,12 +174,7 @@ Outputs model sizes, compression ratio, and quantized layer percentages.
 Benchmark baseline and quantized models:
 
 ```bash
-python latency_benchmark.py \
-  --baseline yolo11n.pt \
-  --quantized saved_models/yolo11n/stage1-3+bitlinear_ttq.pt \
-  --export-fp16 \
-  --export-int8 \
-  --num-runs 30
+python latency_benchmark.py --baseline yolo11n.pt --quantized saved_models/yolo11n/stage1+2+3.pt 
 ```
 
 Reports mean latency, throughput (FPS), and memory usage.
