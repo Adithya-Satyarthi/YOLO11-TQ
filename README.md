@@ -22,12 +22,13 @@ The goal is to compress YOLO11 (n/x sizes) and measure accuracy vs. compression 
 - **BitLinear_TTQ:** Ternary Conv2d with LayerNorm, absmax activation quantization (8-bit), and learned scaling for use in C2PSA attention.
 - **Standard BitLinear:** Fixed-scale baseline for ablation.
 - **Core scripts:**
-  - `train.py` — Progressive TTQ training (stages 1–3)
-  - `train_c2psa.py` — BitLinear_TTQ training for C2PSA layers
-  - `train_c2psa_standard.py` — Standard BitLinear baseline
-  - `compression_calculation.py` — Computes theoretical compression and coverage
-  - `latency_benchmark.py` — Exports to TensorRT, benchmarks latency
-  - `test.py` — Identifies ternary layers
+  - `train.py` - Progressive TTQ training (stages 1–3)
+  - `train_c2psa.py` - BitLinear_TTQ training for C2PSA layers
+  - `train_c2psa_standard.py` - Standard BitLinear baseline
+  - `compare_bitlinear.py` - Compare the Standard and TTQ based Bitlinear Implementation
+  - `compression_calculation.py` - Computes theoretical compression and coverage
+  - `latency_benchmark.py` - Exports to TensorRT, benchmarks latency
+  - `test.py` - Identifies ternary layers
 
 ---
 
